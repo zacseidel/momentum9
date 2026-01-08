@@ -358,7 +358,7 @@ class ReportService:
                         </p>
                     </div>
 
-                    <p style="font-size:0.95em; line-height:1.6; color:#444;">{{ description[:500] }}...</p>
+                    <p style="font-size:0.95em; line-height:1.6; color:#444;">{{ description }}...</p>
                     
                     <h5 style="margin-bottom:8px; margin-top:20px; border-bottom:1px solid #ddd; padding-bottom:5px;">Recent News</h5>
                     <ul style="font-size:0.9em; padding-left:20px; color:#0056b3; line-height:1.4;">
