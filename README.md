@@ -100,37 +100,37 @@ POLYGON_API_KEY=your_key_here
 
 # Initialize Database
 python init_db.py
+```
 
 
-2. Weekly Routine (Run on Fridays)
+### 2. Weekly Routine (Run on Fridays)
 
-Bash
+```bash
 python run_report.py
+```
+
 Process:
 
-Downloads prices/news & generates HTML report.
-
-Auto-Picks Options: Identifies specific contract symbols (e.g., NVDA260515C...) for new Top 5 entrants.
-
-Backfills Prices: Checks Polygon for the historical prices of any pending trades.
-
-Builds Site: Regenerates docs/.
+* Downloads prices/news & generates HTML report.
+* Auto-Picks Options: Identifies specific contract symbols (e.g., NVDA260515C...) for new Top 5 entrants.
+* Backfills Prices: Checks Polygon for the historical prices of any pending trades.
+* Builds Site: Regenerates docs/.
 
 Action: Commit and push the docs/ folder to GitHub to update your live dashboard.
 
-3. Active Trading
+### 3. Active Trading
 
 Stock Signals: Check data/trade_log.csv. Change user_action to BOUGHT if executed.
 
 Option Ideas: Check data/option_log.csv to see which specific contracts the algorithm selected.
 
-4. Writing Trends
+### 4. Writing Trends
 
 Create a markdown file in trends/ (e.g., 2026-01-08-volatility.md).
 
 Run the report to publish it to the website.
 
-🧠 Key Insights & "Gotchas"
+## 🧠 Key Insights & "Gotchas"
 Data Gaps: Option data is ephemeral. The system "Forward Tracks" (logs the symbol today, tracks it moving forward) because retrieving historical option chains usually requires expensive paid data tiers.
 
 Polygon Rate Limits: The script is optimized for the Free Tier (5 calls/min) but includes sleep timers. Be patient during news fetching.
