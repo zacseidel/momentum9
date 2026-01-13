@@ -457,7 +457,6 @@ class ReportService:
                         <td>{{ row.cohort }}</td>
                         <td><strong>{{ row.symbol }}</strong></td>
                         <td style="font-weight:bold; color: {% if row.action == 'ADDED' %}green{% else %}red{% endif %};">{{ row.action }}</td>
-                        <td>{{ row.name }}</td>
                     </tr>
                 {% endfor %}
                 </tbody>
