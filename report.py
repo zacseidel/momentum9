@@ -449,7 +449,7 @@ class ReportService:
             <h2 style="border-left-color: #e67e22;">🔄 Universe Updates (Today)</h2>
             <table class="uni-table">
                 <thead>
-                    <tr><th>Cohort</th><th>Ticker</th><th>Action</th><th>Company Name</th></tr>
+                    <tr><th>Cohort</th><th>Ticker</th><th>Action</th></tr>
                 </thead>
                 <tbody>
                 {% for row in universe_changes %}

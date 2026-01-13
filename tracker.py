@@ -235,75 +235,75 @@ class TradeTracker:
         return None
 
     # ------------------------------------------------------------------
-    # 3. HTML Report (UPDATED: Perf Metric for Options)
+    # 3. HTML Report (UPDATED: Closed Positions Section)
     # ------------------------------------------------------------------
     def render_html_report(self) -> str:
         df_stock, df_opt = self.load_logs()
         
-        # --- A. Completed Stock Trades ---
+        # --- A. Completed Stock Trades (Stats) ---
         completed = df_stock.dropna(subset=["buy_price", "sell_price"]).copy()
         stock_stats_html = "<p>No completed trades.</p>"
         if not completed.empty:
             completed["buy_date"] = pd.to_datetime(completed["buy_date"])
             completed["sell_date"] = pd.to_datetime(completed["sell_date"])
             completed["days"] = (completed["sell_date"] - completed["buy_date"]).dt.days.clip(lower=1)
+            
+            # Calculate Returns
             completed["log_ret"] = np.log(completed["sell_price"] / completed["buy_price"])
             completed["spy_log_ret"] = np.log(completed["spy_sell_price"] / completed["spy_buy_price"])
-            completed["ann_alpha"] = (completed["log_ret"] - completed["spy_log_ret"]) * (365 / completed["days"])
             
+            # Calculate Alphas
+            completed["raw_alpha"] = completed["log_ret"] - completed["spy_log_ret"]
+            completed["ann_alpha"] = completed["raw_alpha"] * (365 / completed["days"])
+            
+            # Aggregate
             summary = completed.groupby(["cohort", "user_action"]).agg({
-                "trade_id": "count", "days": "mean", "ann_alpha": "mean"
-            })
-            summary.columns = ["Trades", "Avg Days", "Ann. Alpha"]
-            stock_stats_html = summary.applymap(lambda x: f"{x:.2%}" if isinstance(x, float) else x).to_html(classes="styled-table")
+                "trade_id": "count",        # Trades
+                "days": "mean",             # Average Days
+                "log_ret": "mean",          # Average Return
+                "raw_alpha": "mean",        # Average Alpha
+                "ann_alpha": "mean"         # Average Ann. Alpha
+            }).reset_index() # Moves Cohort/User Action from index to columns (single header row)
+            
+            # Rename Columns
+            summary.columns = [
+                "Cohort", "User Action", "Trades", "Average Days", 
+                "Average Return", "Average Actual Alpha", "Average Annualized Alpha"
+            ]
+            
+            # Apply Formatting
+            formatters = {
+                "Average Days": "{:.1f}".format,
+                "Average Return": "{:.2%}".format,
+                "Average Actual Alpha": "{:.2%}".format,
+                "Average Annualized Alpha": "{:.2%}".format
+            }
+            
+            stock_stats_html = summary.to_html(classes="styled-table", index=False, formatters=formatters)
 
-        # --- B. Completed Option Trades (New Aggregation) ---
-        # We need entry and exit price to calc return
+
+        # --- B. Completed Option Trades (Stats) ---
         comp_opts = df_opt.dropna(subset=["entry_price", "exit_price"]).copy()
-        
         opt_agg_html = "<p>No completed option trades.</p>"
         if not comp_opts.empty:
-            # Join with Stock info to get Cohort/Action
             comp_opts = comp_opts.merge(df_stock[["trade_id", "cohort", "user_action"]], on="trade_id", how="left")
-            
-            # Calculate Annualized Log Return
             comp_opts["entry_date"] = pd.to_datetime(comp_opts["entry_date"])
             comp_opts["exit_date"] = pd.to_datetime(comp_opts["exit_date"])
             comp_opts["days"] = (comp_opts["exit_date"] - comp_opts["entry_date"]).dt.days.clip(lower=1)
-            
-            # Log Return: ln(exit / entry)
             comp_opts["log_ret"] = np.log(comp_opts["exit_price"] / comp_opts["entry_price"])
-            
-            # Annualize: LogRet * (365 / days)
             comp_opts["ann_log_ret"] = comp_opts["log_ret"] * (365 / comp_opts["days"])
             
-            # Aggregate: Cohort -> Action -> Strategy
             opt_summary = comp_opts.groupby(["cohort", "user_action", "strategy"]).agg({
                 "option_symbol": "count",
-                "ann_log_ret": "mean"  # The requested metric
+                "ann_log_ret": "mean"
             }).reset_index()
             
             opt_summary.columns = ["Cohort", "Stock Action", "Option Strategy", "Count", "Avg Ann. Log Return"]
-            
-            # Format
             opt_summary["Avg Ann. Log Return"] = opt_summary["Avg Ann. Log Return"].apply(lambda x: f"{x:.2%}")
-            
             opt_agg_html = opt_summary.to_html(classes="styled-table", index=False)
 
-        # --- C. Active Options (Details Only) ---
-        df_opt_disp = df_opt.merge(df_stock[["trade_id", "ticker", "cohort", "user_action"]], on="trade_id", how="left")
-        open_opts = df_opt_disp[df_opt_disp["status"] == "OPEN"].copy()
-        
-        if not open_opts.empty:
-            opt_details = open_opts[["cohort", "ticker", "strategy", "option_symbol", "entry_price"]].sort_values(["cohort", "ticker"])
-            opt_details["entry_price"] = opt_details["entry_price"].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "Pending")
-            opt_detail_html = opt_details.to_html(classes="styled-table", index=False)
-            num_open_opts = len(open_opts)
-        else:
-            opt_detail_html = "<p>No active option positions.</p>"
-            num_open_opts = 0
-
-        # --- D. Active Stocks ---
+        # --- C. Active Positions (Details) ---
+        # Stocks
         open_stocks = df_stock[df_stock["status"] == "OPEN"].copy()
         if not open_stocks.empty:
             open_stocks["buy_price"] = open_stocks["buy_price"].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "Pending")
@@ -315,6 +315,58 @@ class TradeTracker:
             open_stocks_html = "<p>No active stock positions.</p>"
             num_open_stocks = 0
 
+        # Options
+        df_opt_disp = df_opt.merge(df_stock[["trade_id", "ticker", "cohort", "user_action"]], on="trade_id", how="left")
+        open_opts = df_opt_disp[df_opt_disp["status"] == "OPEN"].copy()
+        if not open_opts.empty:
+            opt_details = open_opts[["cohort", "ticker", "strategy", "option_symbol", "entry_price"]].sort_values(["cohort", "ticker"])
+            opt_details["entry_price"] = opt_details["entry_price"].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "Pending")
+            opt_detail_html = opt_details.to_html(classes="styled-table", index=False)
+            num_open_opts = len(open_opts)
+        else:
+            opt_detail_html = "<p>No active option positions.</p>"
+            num_open_opts = 0
+
+        # --- D. Closed Positions (Details - Recent) ---
+        # Stocks: 20 most recent
+        closed_stocks = df_stock[df_stock["status"] == "CLOSED"].copy()
+        if not closed_stocks.empty:
+            closed_stocks["drop_date"] = pd.to_datetime(closed_stocks["drop_date"])
+            # Sort descending by drop date
+            closed_stocks = closed_stocks.sort_values("drop_date", ascending=False).head(20)
+            
+            # Formatting
+            closed_stocks["buy_price"] = closed_stocks["buy_price"].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "-")
+            closed_stocks["sell_price"] = closed_stocks["sell_price"].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "-")
+            
+            # Columns to display
+            c_stk_cols = ["cohort", "ticker", "buy_date", "buy_price", "drop_date", "sell_price", "user_action"]
+            closed_stocks_html = closed_stocks[c_stk_cols].to_html(classes="styled-table", index=False)
+            num_closed_stocks = len(closed_stocks)
+        else:
+            closed_stocks_html = "<p>No closed stock positions.</p>"
+            num_closed_stocks = 0
+
+        # Options: 60 most recent
+        # We reuse df_opt_disp which has the ticker merged in
+        closed_opts = df_opt_disp[df_opt_disp["status"] == "CLOSED"].copy()
+        if not closed_opts.empty:
+            closed_opts["exit_date"] = pd.to_datetime(closed_opts["exit_date"])
+            # Sort descending by exit date
+            closed_opts = closed_opts.sort_values("exit_date", ascending=False).head(60)
+            
+            # Formatting
+            closed_opts["entry_price"] = closed_opts["entry_price"].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "-")
+            closed_opts["exit_price"] = closed_opts["exit_price"].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "-")
+
+            c_opt_cols = ["cohort", "ticker", "strategy", "option_symbol", "entry_price", "exit_date", "exit_price"]
+            closed_opts_html = closed_opts[c_opt_cols].to_html(classes="styled-table", index=False)
+            num_closed_opts = len(closed_opts)
+        else:
+            closed_opts_html = "<p>No closed option positions.</p>"
+            num_closed_opts = 0
+
+        # --- E. Render Template ---
         tpl = Template("""
         <!DOCTYPE html>
         <html>
@@ -334,9 +386,12 @@ class TradeTracker:
             </style>
         </head>
         <body>
+            <div style="margin-bottom: 10px;">
+                <a href="../index.html" style="text-decoration:none; color:#0066cc; font-size:0.9em;">&larr; Back to Dashboard</a>
+            </div>
             <h1>📈 Performance Dashboard <span style="font-size:0.5em; float:right; color:#888;">{{ date }}</span></h1>
             
-            <h2>📊 Strategy Performance (Completed Trades)</h2>
+            <h2>📊 Strategy Performance (Aggregate)</h2>
             
             <h3>Stocks (Alpha vs SPY)</h3>
             {{ stock_stats_html | safe }}
@@ -355,6 +410,18 @@ class TradeTracker:
                 <summary>Active Option Contracts ({{ num_opts }})</summary>
                 {{ opt_detail_html | safe }}
             </details>
+
+            <h2>🔴 Closed Positions (Recent)</h2>
+
+            <details>
+                <summary>Recently Closed Stocks ({{ num_closed_stocks }})</summary>
+                {{ closed_stocks_html | safe }}
+            </details>
+            
+            <details>
+                <summary>Recently Closed Options ({{ num_closed_opts }})</summary>
+                {{ closed_opts_html | safe }}
+            </details>
             
             <div style="margin-top:50px; text-align:center; font-size:0.8em; color:#999;">
                 Generated by Momentum Tracker
@@ -370,5 +437,11 @@ class TradeTracker:
             open_stocks_html=open_stocks_html,
             opt_detail_html=opt_detail_html,
             num_stocks=num_open_stocks,
-            num_opts=num_open_opts
+            num_opts=num_open_opts,
+            closed_stocks_html=closed_stocks_html,
+            closed_opts_html=closed_opts_html,
+            num_closed_stocks=num_closed_stocks,
+            num_closed_opts=num_closed_opts
         )
+
+
