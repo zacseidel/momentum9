@@ -17,12 +17,45 @@
             </style>
         </head>
         <body>
-            <h1>📈 Performance Dashboard <span style="font-size:0.5em; float:right; color:#888;">2026-01-10</span></h1>
+            <h1>📈 Performance Dashboard <span style="font-size:0.5em; float:right; color:#888;">2026-01-13</span></h1>
             
             <h2>📊 Strategy Performance (Completed Trades)</h2>
             
             <h3>Stocks (Alpha vs SPY)</h3>
-            <p>No completed trades.</p>
+            <table border="1" class="dataframe styled-table">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th></th>
+      <th>Trades</th>
+      <th>Avg Days</th>
+      <th>Ann. Alpha</th>
+    </tr>
+    <tr>
+      <th>cohort</th>
+      <th>user_action</th>
+      <th></th>
+      <th></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>megacap</th>
+      <th>WATCH</th>
+      <td>3</td>
+      <td>233.33%</td>
+      <td>-515.30%</td>
+    </tr>
+    <tr>
+      <th>sp400</th>
+      <th>WATCH</th>
+      <td>1</td>
+      <td>300.00%</td>
+      <td>-312.47%</td>
+    </tr>
+  </tbody>
+</table>
             
             <h3>Options (Annualized Log Returns)</h3>
             <p>No completed option trades.</p>
@@ -58,22 +91,22 @@
     </tr>
     <tr>
       <td>megacap</td>
-      <td>AMD</td>
-      <td>2026-01-08</td>
-      <td>$207.30</td>
-      <td>BOUGHT</td>
-    </tr>
-    <tr>
-      <td>megacap</td>
       <td>JNJ</td>
       <td>2026-01-09</td>
-      <td>Pending</td>
+      <td>$209.90</td>
       <td>WATCH</td>
     </tr>
     <tr>
       <td>megacap</td>
       <td>GOOGL</td>
       <td>2026-01-10</td>
+      <td>$334.04</td>
+      <td>WATCH</td>
+    </tr>
+    <tr>
+      <td>megacap</td>
+      <td>NVDA</td>
+      <td>2026-01-13</td>
       <td>Pending</td>
       <td>WATCH</td>
     </tr>
@@ -100,15 +133,15 @@
     </tr>
     <tr>
       <td>sp400</td>
-      <td>ATI</td>
-      <td>2026-01-08</td>
-      <td>$124.92</td>
+      <td>CIEN</td>
+      <td>2026-01-13</td>
+      <td>Pending</td>
       <td>WATCH</td>
     </tr>
     <tr>
       <td>sp400</td>
-      <td>AVAV</td>
-      <td>2026-01-09</td>
+      <td>NXT</td>
+      <td>2026-01-13</td>
       <td>Pending</td>
       <td>WATCH</td>
     </tr>
@@ -117,13 +150,6 @@
       <td>LRCX</td>
       <td>2026-01-08</td>
       <td>$219.59</td>
-      <td>BOUGHT</td>
-    </tr>
-    <tr>
-      <td>sp500</td>
-      <td>NEM</td>
-      <td>2026-01-08</td>
-      <td>$109.09</td>
       <td>BOUGHT</td>
     </tr>
     <tr>
@@ -147,12 +173,19 @@
       <td>$200.92</td>
       <td>BOUGHT</td>
     </tr>
+    <tr>
+      <td>sp500</td>
+      <td>WBD</td>
+      <td>2026-01-13</td>
+      <td>Pending</td>
+      <td>WATCH</td>
+    </tr>
   </tbody>
 </table>
             </details>
             
             <details>
-                <summary>Active Option Contracts (27)</summary>
+                <summary>Active Option Contracts (29)</summary>
                 <table border="1" class="dataframe styled-table">
   <thead>
     <tr style="text-align: right;">
@@ -164,27 +197,6 @@
     </tr>
   </thead>
   <tbody>
-    <tr>
-      <td>megacap</td>
-      <td>AMD</td>
-      <td>100d_Call</td>
-      <td>O:AMD260417C00145000</td>
-      <td>Pending</td>
-    </tr>
-    <tr>
-      <td>megacap</td>
-      <td>AMD</td>
-      <td>500d_LEAP</td>
-      <td>O:AMD270617C00150000</td>
-      <td>Pending</td>
-    </tr>
-    <tr>
-      <td>megacap</td>
-      <td>AMD</td>
-      <td>Short_Put</td>
-      <td>O:AMD260206P00140000</td>
-      <td>Pending</td>
-    </tr>
     <tr>
       <td>megacap</td>
       <td>GE</td>
@@ -249,38 +261,38 @@
       <td>Pending</td>
     </tr>
     <tr>
-      <td>sp400</td>
-      <td>ATI</td>
+      <td>megacap</td>
+      <td>NVDA</td>
       <td>100d_Call</td>
-      <td>O:ATI260417C00060000</td>
+      <td>O:NVDA260417C00145000</td>
       <td>Pending</td>
     </tr>
     <tr>
-      <td>sp400</td>
-      <td>ATI</td>
-      <td>Short_Put</td>
-      <td>O:ATI260220P00060000</td>
-      <td>Pending</td>
-    </tr>
-    <tr>
-      <td>sp400</td>
-      <td>AVAV</td>
-      <td>100d_Call</td>
-      <td>O:AVAV260515C00170000</td>
-      <td>Pending</td>
-    </tr>
-    <tr>
-      <td>sp400</td>
-      <td>AVAV</td>
+      <td>megacap</td>
+      <td>NVDA</td>
       <td>500d_LEAP</td>
-      <td>O:AVAV270115C00180000</td>
+      <td>O:NVDA270617C00150000</td>
+      <td>Pending</td>
+    </tr>
+    <tr>
+      <td>megacap</td>
+      <td>NVDA</td>
+      <td>Short_Put</td>
+      <td>O:NVDA260213P00135000</td>
       <td>Pending</td>
     </tr>
     <tr>
       <td>sp400</td>
-      <td>AVAV</td>
-      <td>Short_Put</td>
-      <td>O:AVAV260206P00165000</td>
+      <td>CIEN</td>
+      <td>100d_Call</td>
+      <td>O:CIEN260417C00087500</td>
+      <td>Pending</td>
+    </tr>
+    <tr>
+      <td>sp400</td>
+      <td>CIEN</td>
+      <td>500d_LEAP</td>
+      <td>O:CIEN270115C00092500</td>
       <td>Pending</td>
     </tr>
     <tr>
@@ -295,6 +307,27 @@
       <td>KTOS</td>
       <td>Short_Put</td>
       <td>O:KTOS260220P00027500</td>
+      <td>Pending</td>
+    </tr>
+    <tr>
+      <td>sp400</td>
+      <td>NXT</td>
+      <td>100d_Call</td>
+      <td>O:NXT260515C00035000</td>
+      <td>Pending</td>
+    </tr>
+    <tr>
+      <td>sp400</td>
+      <td>NXT</td>
+      <td>500d_LEAP</td>
+      <td>O:NXT270115C00040000</td>
+      <td>Pending</td>
+    </tr>
+    <tr>
+      <td>sp400</td>
+      <td>NXT</td>
+      <td>Short_Put</td>
+      <td>O:NXT260220P00035000</td>
       <td>Pending</td>
     </tr>
     <tr>
@@ -327,16 +360,30 @@
     </tr>
     <tr>
       <td>sp500</td>
-      <td>NEM</td>
-      <td>Short_Put</td>
-      <td>O:NEM260220P00042500</td>
+      <td>STX</td>
+      <td>500d_LEAP</td>
+      <td>O:STX270617C00110000</td>
       <td>Pending</td>
     </tr>
     <tr>
       <td>sp500</td>
-      <td>STX</td>
+      <td>WBD</td>
+      <td>100d_Call</td>
+      <td>O:WBD260417C00013000</td>
+      <td>Pending</td>
+    </tr>
+    <tr>
+      <td>sp500</td>
+      <td>WBD</td>
       <td>500d_LEAP</td>
-      <td>O:STX270617C00110000</td>
+      <td>O:WBD270617C00015000</td>
+      <td>Pending</td>
+    </tr>
+    <tr>
+      <td>sp500</td>
+      <td>WBD</td>
+      <td>Short_Put</td>
+      <td>O:WBD260220P00012000</td>
       <td>Pending</td>
     </tr>
     <tr>
