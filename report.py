@@ -455,9 +455,8 @@ class ReportService:
                 {% for row in universe_changes %}
                     <tr>
                         <td>{{ row.cohort }}</td>
-                        <td><strong>{{ row.ticker }}</strong></td>
+                        <td><strong>{{ row.symbol }}</strong></td>
                         <td style="font-weight:bold; color: {% if row.action == 'ADDED' %}green{% else %}red{% endif %};">{{ row.action }}</td>
-                        <td>{{ row.name }}</td>
                     </tr>
                 {% endfor %}
                 </tbody>
