@@ -151,9 +151,6 @@ class TradeTracker:
     # ------------------------------------------------------------------
     # 2. Price Resolution
     # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-    # 2. Price Resolution
-    # ------------------------------------------------------------------
     async def resolve_prices(self):
         df_stock, df_opt = self.load_logs()
         p_service = PriceService()
@@ -165,24 +162,11 @@ class TradeTracker:
         if not needs_buy.empty or not needs_sell.empty:
             print(f"   📉 Tracker: Resolving {len(needs_buy)} stock buys, {len(needs_sell)} sells...")
             
-            # Helper with constraints
-            async def get_stock_price(ticker, d_str, col, min_date=None, max_date=None):
+            async def get_stock_price(ticker, d_str, col):
                 base = date.fromisoformat(str(d_str))
-                
-                # Rule 1: Always start looking at Day + 1 (Next Day Execution)
                 for i in range(1, 6):
                     t = base + timedelta(days=i)
-                    
-                    # Rule 2: Buy Constraint - If we hit the Drop Date before we can buy, the trade is invalid.
-                    if max_date and t >= max_date:
-                        return None, None, None
-
-                    # Rule 3: Sell Constraint - We cannot sell before (or on) the day we bought.
-                    if min_date and t <= min_date:
-                        continue
-                        
                     if t > date.today(): return None, None, None
-                    
                     try:
                         await p_service._ensure_date_data(t)
                         snap = await p_service.get_snapshots([ticker, "VOO"], {"tgt":t.isoformat()})
@@ -196,29 +180,15 @@ class TradeTracker:
                     except: pass
                 return None, None, None
 
-            # Resolve Buys
             for i, r in needs_buy.iterrows():
-                drop_dt = date.fromisoformat(str(r["drop_date"])) if pd.notnull(r.get("drop_date")) else None
-                
-                # Pass drop_date as max_date. 
-                # If we can't find a buy price before the drop date, we won't fill it.
-                d, v, s = await get_stock_price(r["ticker"], r["signal_date"], "buy_price", max_date=drop_dt)
+                d, v, s = await get_stock_price(r["ticker"], r["signal_date"], "buy_price")
                 if v: 
                     df_stock.at[i, "buy_date"] = d
                     df_stock.at[i, "buy_price"] = v
                     df_stock.at[i, "spy_buy_price"] = s
 
-            # Resolve Sells
-            # We must re-check df_stock to get any newly resolved buy_dates from the loop above
-            # (Though in pandas, iterating over a copy/slice might miss updates if we aren't careful, 
-            #  but here we are updating df_stock directly by index 'i')
-            
             for i, r in needs_sell.iterrows():
-                # Re-fetch the current row from df_stock to see if buy_date was just updated
-                current_row = df_stock.loc[i]
-                buy_dt = date.fromisoformat(str(current_row["buy_date"])) if pd.notnull(current_row["buy_date"]) else None
-                
-                d, v, s = await get_stock_price(r["ticker"], r["drop_date"], "sell_price", min_date=buy_dt)
+                d, v, s = await get_stock_price(r["ticker"], r["drop_date"], "sell_price")
                 if v: 
                     df_stock.at[i, "sell_date"] = d
                     df_stock.at[i, "sell_price"] = v
@@ -235,7 +205,6 @@ class TradeTracker:
             print(f"   🎲 Tracker: Resolving {len(needs_entry)} option entries...")
             async with httpx.AsyncClient() as client:
                 for _, row in needs_entry.iterrows():
-                    # Option Entry = Stock Buy Date
                     price = await self._fetch_option_price(client, row["option_symbol"], row["buy_date"])
                     if price:
                         mask = (df_opt["trade_id"] == row["trade_id"]) & (df_opt["strategy"] == row["strategy"])
@@ -247,7 +216,6 @@ class TradeTracker:
             print(f"   🎲 Tracker: Resolving {len(needs_exit)} option exits...")
             async with httpx.AsyncClient() as client:
                 for _, row in needs_exit.iterrows():
-                    # Option Exit = Stock Sell Date
                     price = await self._fetch_option_price(client, row["option_symbol"], row["sell_date"])
                     if price:
                         mask = (df_opt["trade_id"] == row["trade_id"]) & (df_opt["strategy"] == row["strategy"])
@@ -255,7 +223,7 @@ class TradeTracker:
                         df_opt.loc[mask, "exit_price"] = price
 
         self.save_logs(df_stock, df_opt)
-    
+
     async def _fetch_option_price(self, client, symbol, date_str):
         url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{date_str}/{date_str}?adjusted=true&apiKey={POLYGON_KEY}"
         try:
