@@ -434,6 +434,10 @@ class ReportService:
             </style>
         </head>
         <body>
+            <div style="margin-bottom: 10px;">
+                <a href="../index.html" style="text-decoration:none; color:#0066cc; font-size:0.9em;">&larr; Back to Dashboard</a>
+            </div>
+
             <h1>🚀 Momentum Strategy Report <span style="float:right; font-weight:normal; font-size:0.6em; color:#777;">{{ date }}</span></h1>
             
             <div class="benchmark">
