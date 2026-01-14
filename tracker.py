@@ -148,38 +148,15 @@ class TradeTracker:
                     "status": "OPEN"
                 })
 
-    # ------------------------------------------------------------------
-    # 2. Price Resolution
-    # ------------------------------------------------------------------
+
     # ------------------------------------------------------------------
     # 2. Price Resolution
     # ------------------------------------------------------------------
     async def resolve_prices(self):
         df_stock, df_opt = self.load_logs()
         p_service = PriceService()
-
-        # --- STEP 0: SANITIZE DATA (Fix Time Travel Bugs) ---
-        # If we recorded a Buy Date that is AFTER the Drop Date, that is impossible.
-        # We must wipe those values so the logic below can re-evaluate them correctly.
         
-        # Ensure dates are strings for comparison
-        df_stock["buy_date"] = df_stock["buy_date"].astype(str)
-        df_stock["drop_date"] = df_stock["drop_date"].astype(str)
-        
-        # Identify impossible rows (Buy > Drop) ignoring NaNs
-        mask = (df_stock["buy_date"] > df_stock["drop_date"]) & \
-               (df_stock["buy_date"] != "nan") & \
-               (df_stock["drop_date"] != "nan")
-               
-        if mask.any():
-            print(f"   🧹 Tracker: Wiping {mask.sum()} impossible buy dates (Buy > Drop)...")
-            df_stock.loc[mask, ["buy_date", "buy_price", "spy_buy_price"]] = np.nan
-            # Save immediately so 'needs_buy' below picks them up
-            self.save_logs(df_stock, df_opt)
-            # Reload to ensure clean state
-            df_stock, df_opt = self.load_logs()
-        
-        # --- A. Stock Resolution ---
+        # A. Stock Resolution
         needs_buy = df_stock[df_stock["buy_price"].isna() & df_stock["signal_date"].notna()]
         needs_sell = df_stock[df_stock["sell_price"].isna() & df_stock["drop_date"].notna()]
         
@@ -230,6 +207,10 @@ class TradeTracker:
                     df_stock.at[i, "spy_buy_price"] = s
 
             # Resolve Sells
+            # We must re-check df_stock to get any newly resolved buy_dates from the loop above
+            # (Though in pandas, iterating over a copy/slice might miss updates if we aren't careful, 
+            #  but here we are updating df_stock directly by index 'i')
+            
             for i, r in needs_sell.iterrows():
                 # Re-fetch the current row from df_stock to see if buy_date was just updated
                 current_row = df_stock.loc[i]
@@ -272,9 +253,6 @@ class TradeTracker:
                         df_opt.loc[mask, "exit_price"] = price
 
         self.save_logs(df_stock, df_opt)
-    # ------------------------------------------------------------------
-    # 2. Price Resolution
-    # ------------------------------------------------------------------
     
     async def _fetch_option_price(self, client, symbol, date_str):
         url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{date_str}/{date_str}?adjusted=true&apiKey={POLYGON_KEY}"
@@ -287,17 +265,26 @@ class TradeTracker:
         return None
 
     # ------------------------------------------------------------------
-    # 3. HTML Report (UPDATED: Closed Positions Section)
+    # 3. HTML Report (UPDATED: Filtering Invalid Rows)
     # ------------------------------------------------------------------
     def render_html_report(self) -> str:
         df_stock, df_opt = self.load_logs()
         
         # --- A. Completed Stock Trades (Stats) ---
-        completed = df_stock.dropna(subset=["buy_price", "sell_price"]).copy()
-        stock_stats_html = "<p>No completed trades.</p>"
+        # Filter 1: Must have prices and DATES
+        completed = df_stock.dropna(subset=["buy_price", "sell_price", "buy_date", "sell_date"]).copy()
+        
         if not completed.empty:
+            # Convert to datetime
             completed["buy_date"] = pd.to_datetime(completed["buy_date"])
             completed["sell_date"] = pd.to_datetime(completed["sell_date"])
+            
+            # Filter 2: Exclude trades where Buy Date is not strictly BEFORE Sell Date
+            # (Removes same-day scratches)
+            completed = completed[completed["buy_date"] < completed["sell_date"]]
+
+        stock_stats_html = "<p>No completed trades.</p>"
+        if not completed.empty:
             completed["days"] = (completed["sell_date"] - completed["buy_date"]).dt.days.clip(lower=1)
             
             # Calculate Returns
@@ -315,15 +302,13 @@ class TradeTracker:
                 "log_ret": "mean",          # Average Return
                 "raw_alpha": "mean",        # Average Alpha
                 "ann_alpha": "mean"         # Average Ann. Alpha
-            }).reset_index() # Moves Cohort/User Action from index to columns (single header row)
+            }).reset_index()
             
-            # Rename Columns
             summary.columns = [
                 "Cohort", "User Action", "Trades", "Average Days", 
                 "Average Return", "Average Actual Alpha", "Average Annualized Alpha"
             ]
             
-            # Apply Formatting
             formatters = {
                 "Average Days": "{:.1f}".format,
                 "Average Return": "{:.2%}".format,
@@ -333,7 +318,6 @@ class TradeTracker:
             
             stock_stats_html = summary.to_html(classes="styled-table", index=False, formatters=formatters)
 
-
         # --- B. Completed Option Trades (Stats) ---
         comp_opts = df_opt.dropna(subset=["entry_price", "exit_price"]).copy()
         opt_agg_html = "<p>No completed option trades.</p>"
@@ -341,18 +325,23 @@ class TradeTracker:
             comp_opts = comp_opts.merge(df_stock[["trade_id", "cohort", "user_action"]], on="trade_id", how="left")
             comp_opts["entry_date"] = pd.to_datetime(comp_opts["entry_date"])
             comp_opts["exit_date"] = pd.to_datetime(comp_opts["exit_date"])
-            comp_opts["days"] = (comp_opts["exit_date"] - comp_opts["entry_date"]).dt.days.clip(lower=1)
-            comp_opts["log_ret"] = np.log(comp_opts["exit_price"] / comp_opts["entry_price"])
-            comp_opts["ann_log_ret"] = comp_opts["log_ret"] * (365 / comp_opts["days"])
             
-            opt_summary = comp_opts.groupby(["cohort", "user_action", "strategy"]).agg({
-                "option_symbol": "count",
-                "ann_log_ret": "mean"
-            }).reset_index()
-            
-            opt_summary.columns = ["Cohort", "Stock Action", "Option Strategy", "Count", "Avg Ann. Log Return"]
-            opt_summary["Avg Ann. Log Return"] = opt_summary["Avg Ann. Log Return"].apply(lambda x: f"{x:.2%}")
-            opt_agg_html = opt_summary.to_html(classes="styled-table", index=False)
+            # Filter invalid option dates if necessary
+            comp_opts = comp_opts[comp_opts["entry_date"] < comp_opts["exit_date"]]
+
+            if not comp_opts.empty:
+                comp_opts["days"] = (comp_opts["exit_date"] - comp_opts["entry_date"]).dt.days.clip(lower=1)
+                comp_opts["log_ret"] = np.log(comp_opts["exit_price"] / comp_opts["entry_price"])
+                comp_opts["ann_log_ret"] = comp_opts["log_ret"] * (365 / comp_opts["days"])
+                
+                opt_summary = comp_opts.groupby(["cohort", "user_action", "strategy"]).agg({
+                    "option_symbol": "count",
+                    "ann_log_ret": "mean"
+                }).reset_index()
+                
+                opt_summary.columns = ["Cohort", "Stock Action", "Option Strategy", "Count", "Avg Ann. Log Return"]
+                opt_summary["Avg Ann. Log Return"] = opt_summary["Avg Ann. Log Return"].apply(lambda x: f"{x:.2%}")
+                opt_agg_html = opt_summary.to_html(classes="styled-table", index=False)
 
         # --- C. Active Positions (Details) ---
         # Stocks
@@ -382,8 +371,19 @@ class TradeTracker:
         # --- D. Closed Positions (Details - Recent) ---
         # Stocks: 20 most recent
         closed_stocks = df_stock[df_stock["status"] == "CLOSED"].copy()
+        
+        # FILTER: Remove rows where buy_date is NaN
+        closed_stocks = closed_stocks.dropna(subset=["buy_date"])
+        
         if not closed_stocks.empty:
+            # Convert for comparison
             closed_stocks["drop_date"] = pd.to_datetime(closed_stocks["drop_date"])
+            closed_stocks["buy_date"] = pd.to_datetime(closed_stocks["buy_date"])
+            
+            # FILTER: Remove rows where Buy Date is same as Drop Date (or after)
+            closed_stocks = closed_stocks[closed_stocks["buy_date"] < closed_stocks["drop_date"]]
+
+        if not closed_stocks.empty:
             # Sort descending by drop date
             closed_stocks = closed_stocks.sort_values("drop_date", ascending=False).head(20)
             
@@ -400,10 +400,17 @@ class TradeTracker:
             num_closed_stocks = 0
 
         # Options: 60 most recent
-        # We reuse df_opt_disp which has the ticker merged in
         closed_opts = df_opt_disp[df_opt_disp["status"] == "CLOSED"].copy()
+        # Filter NaN entries for options too
+        closed_opts = closed_opts.dropna(subset=["entry_date"])
+        
         if not closed_opts.empty:
+            closed_opts["entry_date"] = pd.to_datetime(closed_opts["entry_date"])
             closed_opts["exit_date"] = pd.to_datetime(closed_opts["exit_date"])
+            
+            # Filter same-day option scratches
+            closed_opts = closed_opts[closed_opts["entry_date"] < closed_opts["exit_date"]]
+            
             # Sort descending by exit date
             closed_opts = closed_opts.sort_values("exit_date", ascending=False).head(60)
             
@@ -496,4 +503,6 @@ class TradeTracker:
             num_closed_opts=num_closed_opts
         )
 
+
+# Example usage:
 
