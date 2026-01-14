@@ -100,7 +100,7 @@ def render_page_tpl(title, content):
     </head>
     <body>
         <div class="nav">
-            <a href="index.html">← Back to Dashboard</a>
+            <a href="../index.html">← Back to Dashboard</a>
         </div>
         <h1>{{ title }}</h1>
         {{ content | safe }}
