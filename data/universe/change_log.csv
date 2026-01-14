@@ -931,3 +931,5 @@ date,cohort,action,symbol
 2026-01-07,megacap,add,NVDA
 2026-01-13,megacap,add,ORCL
 2026-01-13,megacap,drop,AMD
+2026-01-14,megacap,add,AMD
+2026-01-14,megacap,drop,ORCL
