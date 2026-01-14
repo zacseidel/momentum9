@@ -3,11 +3,11 @@
 **Date:** January 14, 2026
 **Sector Status:** Maturing / High-Growth
 
-## 1. The Three Drivers: Use Cases Catalyzing the Economy
+## The Three Drivers: Use Cases Catalyzing the Economy
 
 The space industry has graduated from a phase of "access" (building rockets) to a phase of "utility" (selling services). Three primary use cases are driving trillion-dollar potential in 2026.
 
-### **A. Global Connectivity (Direct-to-Cell)**
+### **Global Connectivity (Direct-to-Cell)**
 The "Killer App" of the new space age. The goal is to eliminate cellular dead zones by connecting standard smartphones directly to satellites.
 
 * **The Shift:** Moving from specialized hardware (satellite phones) to mass-market software solutions on existing iPhones and Androids.
@@ -18,7 +18,7 @@ The "Killer App" of the new space age. The goal is to eliminate cellular dead zo
 * **Methodology:** Based on Starlink's projected 2025 revenue of ~$11.8B (growing to ~$14B+ in '26) plus early commercial revenues from ASTS and legacy providers (Iridium/Viasat).
 * **Starlink Breakdown:** ~$7.5B Consumer Services + $3.0B Gov Contracts + $1.3B Hardware.
 
-### **B. The Cislunar Economy (Artemis Infrastructure)**
+### **The Cislunar Economy (Artemis Infrastructure)**
 With NASA's Artemis campaign returning humans to the Moon, a permanent supply chain is being established.
 
 * **The Shift:** From "Flags and Footprints" to "Logistics and Utilities." Companies are now paid to deliver cargo, transmit data, and generate power on the lunar surface.
@@ -29,6 +29,7 @@ With NASA's Artemis campaign returning humans to the Moon, a permanent supply ch
 * **Methodology:** Derived from NASA's specific fiscal year obligation for HLS (Human Landing System) payments and CLPS (Commercial Lunar Payload Services) task orders active in 2026.
 
 #### **Key Government Contracts (Active)**
+
 | Program | Winner(s) | Value | Status |
 | :--- | :--- | :--- | :--- |
 | **HLS Option B (Starship)** | **SpaceX** | **$4.0B+** | In Development (Starship V2) |
@@ -37,7 +38,7 @@ With NASA's Artemis campaign returning humans to the Moon, a permanent supply ch
 | **CLPS IM-3 (Reiner Gamma)** | **Intuitive Machines** | **$77.5M** | Launching Q3 2026 |
 | **CLPS IM-4 (South Pole)** | **Intuitive Machines** | **$116.9M** | In Production (2027 Launch) |
 
-### **C. National Defense (The "Shield")**
+### **National Defense (The "Shield")**
 The US Department of Defense has shifted away from massive, vulnerable satellites to "proliferated architectures"—swarms of hundreds of smaller satellites in Low Earth Orbit (LEO) designed to track hypersonic missiles.
 
 * **The Shift:** From "Exquisite Systems" (Billion-dollar satellites) to "Resilient Swarms" (Disposable assets).
@@ -58,7 +59,7 @@ The US Department of Defense has shifted away from massive, vulnerable satellite
 
 ---
 
-## 2. Market Landscape: Major Players
+## Market Landscape: Major Players
 *Companies listed in descending order of Market Cap (or estimated valuation). Note: "Prime" contractors list total company market cap, though space is a sub-segment.*
 
 ### **SpaceX (Space Exploration Technologies Corp.)**
@@ -143,7 +144,7 @@ The US Department of Defense has shifted away from massive, vulnerable satellite
 
 ---
 
-## 3. The 2026 Catalyst Calendar
+## The 2026 Catalyst Calendar
 Key events likely to drive stock performance and industry narrative.
 
 | Quarter | Company | Event | Significance |
@@ -159,7 +160,7 @@ Key events likely to drive stock performance and industry narrative.
 
 ---
 
-## 4. Conclusion
+## Conclusion
 As we move through 2026, the "Novelty" of space has worn off, replaced by the "Utility" of space. The market no longer rewards companies simply for reaching orbit; it rewards companies that can monetize orbit.
 
 The divergence is clear: **SpaceX** remains the gravity well around which the industry orbits, but **Specialists** (Rocket Lab in infrastructure, ASTS in comms, LUNR in lunar logistics) are carving out defensible, multi-billion dollar niches. The traditional Primes (Boeing/Lockheed) are retreating into the role of capital-rich partners rather than innovators.
@@ -177,7 +178,7 @@ Based on financial health, market position, and the 2026 catalyst calendar, here
 
 ### **3. The "Lottery Ticket" Play: EchoStar (SATS)**
 * **The Thesis:** "The Poor Man's SpaceX." Following the sale of their spectrum to SpaceX for stock, EchoStar has effectively transformed into a holding company. The market is currently pricing SATS based on its dying satellite TV business and massive debt load, ignoring that the value of its SpaceX equity stake alone exceeds its current market cap.
-* **Why 2026?** The Starlink IPO Rumor Mill.** As Starlink free cash flow stabilizes in 2026, rumors of a spin-off IPO will likely heat up. If SpaceX/Starlink goes public, the value of SATS's stake becomes "mark-to-market" liquid. We expect SATS to trade in tight correlation with any SpaceX news. If Starship succeeds, SATS goes up. You are effectively buying a "SpaceX Tracking Stock" with embedded leverage.
+* **Why 2026?** The Starlink IPO Rumor Mill. As Starlink free cash flow stabilizes in 2026, rumors of a spin-off IPO will likely heat up. If SpaceX/Starlink goes public, the value of SATS's stake becomes "mark-to-market" liquid. We expect SATS to trade in tight correlation with any SpaceX news. If Starship succeeds, SATS goes up. You are effectively buying a "SpaceX Tracking Stock" with embedded leverage.
 * **Risk Warning: Extreme.** This is a balance sheet arbitrage. If EchoStar mishandles its 2026/27 debt maturities, the SpaceX stake could be liquidated by creditors. You are betting that Charlie Ergen (EchoStar Chairman) is smart enough to ring-fence the SpaceX shares.
 
 
