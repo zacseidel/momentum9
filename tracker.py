@@ -157,8 +157,29 @@ class TradeTracker:
     async def resolve_prices(self):
         df_stock, df_opt = self.load_logs()
         p_service = PriceService()
+
+        # --- STEP 0: SANITIZE DATA (Fix Time Travel Bugs) ---
+        # If we recorded a Buy Date that is AFTER the Drop Date, that is impossible.
+        # We must wipe those values so the logic below can re-evaluate them correctly.
         
-        # A. Stock Resolution
+        # Ensure dates are strings for comparison
+        df_stock["buy_date"] = df_stock["buy_date"].astype(str)
+        df_stock["drop_date"] = df_stock["drop_date"].astype(str)
+        
+        # Identify impossible rows (Buy > Drop) ignoring NaNs
+        mask = (df_stock["buy_date"] > df_stock["drop_date"]) & \
+               (df_stock["buy_date"] != "nan") & \
+               (df_stock["drop_date"] != "nan")
+               
+        if mask.any():
+            print(f"   🧹 Tracker: Wiping {mask.sum()} impossible buy dates (Buy > Drop)...")
+            df_stock.loc[mask, ["buy_date", "buy_price", "spy_buy_price"]] = np.nan
+            # Save immediately so 'needs_buy' below picks them up
+            self.save_logs(df_stock, df_opt)
+            # Reload to ensure clean state
+            df_stock, df_opt = self.load_logs()
+        
+        # --- A. Stock Resolution ---
         needs_buy = df_stock[df_stock["buy_price"].isna() & df_stock["signal_date"].notna()]
         needs_sell = df_stock[df_stock["sell_price"].isna() & df_stock["drop_date"].notna()]
         
@@ -209,10 +230,6 @@ class TradeTracker:
                     df_stock.at[i, "spy_buy_price"] = s
 
             # Resolve Sells
-            # We must re-check df_stock to get any newly resolved buy_dates from the loop above
-            # (Though in pandas, iterating over a copy/slice might miss updates if we aren't careful, 
-            #  but here we are updating df_stock directly by index 'i')
-            
             for i, r in needs_sell.iterrows():
                 # Re-fetch the current row from df_stock to see if buy_date was just updated
                 current_row = df_stock.loc[i]
@@ -255,6 +272,9 @@ class TradeTracker:
                         df_opt.loc[mask, "exit_price"] = price
 
         self.save_logs(df_stock, df_opt)
+    # ------------------------------------------------------------------
+    # 2. Price Resolution
+    # ------------------------------------------------------------------
     
     async def _fetch_option_price(self, client, symbol, date_str):
         url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{date_str}/{date_str}?adjusted=true&apiKey={POLYGON_KEY}"
