@@ -933,3 +933,8 @@ date,cohort,action,symbol
 2026-01-13,megacap,drop,AMD
 2026-01-14,megacap,add,AMD
 2026-01-14,megacap,drop,ORCL
+2026-01-16,sp500,add,MRSH
+2026-01-16,sp500,drop,AMCR
+2026-01-16,sp500,drop,MMC
+2026-01-16,megacap,add,PG
+2026-01-16,megacap,drop,GE
