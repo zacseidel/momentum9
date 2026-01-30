@@ -193,29 +193,28 @@ class TradeTracker:
         
         for i in range(1, 6):
             t = base + timedelta(days=i)
+            if t.weekday() >= 5: continue # Skip weekends
+            if t > date.today(): break
+                
+            t_str = t.isoformat()
             
-            # 1. Skip Weekends immediately without sleeping
-            if t.weekday() >= 5: # 5 = Saturday, 6 = Sunday
-                continue
-                
-            if t > date.today(): 
-                break
-                
-            # 2. Enforce Rate Limit only when we are about to make a real call
+            # Enforce rate limit
             print(f"      zzz Waiting {API_WAIT_SECONDS}s for Polygon API...")
             await asyncio.sleep(API_WAIT_SECONDS)
             
-            t_str = t.isoformat()
-            url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{t_str}/{t_str}?adjusted=true&apiKey={POLYGON_KEY}"
+            # USE THE DAILY OPEN/CLOSE ENDPOINT (More reliable for low volume)
+            url = f"https://api.polygon.io/v1/open-close/option/{symbol}/{t_str}?adjusted=true&apiKey={POLYGON_KEY}"
             
             try:
                 resp = await client.get(url, timeout=5)
                 if resp.status_code == 200:
-                    res = resp.json().get("results", [])
-                    if res: 
-                        return res[0]["c"] # Success!
-                    else:
-                        print(f"      ℹ️ No data for {t_str}, trying next day...")
+                    data = resp.json()
+                    # Use 'close' price if available, otherwise 'open'
+                    price = data.get("close") or data.get("open")
+                    if price:
+                        return price
+                elif resp.status_code == 404:
+                    print(f"      ℹ️ No quote data for {t_str}, trying next day...")
             except Exception as e:
                 print(f"      ⚠️ Request error: {e}")
                 
