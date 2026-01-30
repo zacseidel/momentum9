@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import asyncio
 import httpx
+import time
 from pathlib import Path
 from datetime import date, timedelta
 from jinja2 import Template
@@ -15,6 +16,8 @@ load_dotenv()
 POLYGON_KEY = os.getenv("POLYGON_API_KEY")
 LOG_PATH = Path("data/trade_log.csv")
 OPT_LOG_PATH = Path("data/option_log.csv")
+# 13s ensures we stay under 5 calls/min (60 / 13 = 4.6 calls)
+API_WAIT_SECONDS = 13 
 
 class TradeTracker:
     def __init__(self):
@@ -191,6 +194,11 @@ class TradeTracker:
             t = base + timedelta(days=i)
             if t > date.today(): break
             t_str = t.isoformat()
+            
+            # Rate limit enforcement
+            print(f"      zzz Waiting {API_WAIT_SECONDS}s for Polygon API limits...")
+            await asyncio.sleep(API_WAIT_SECONDS)
+            
             url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{t_str}/{t_str}?adjusted=true&apiKey={POLYGON_KEY}"
             try:
                 resp = await client.get(url, timeout=5)
@@ -203,7 +211,6 @@ class TradeTracker:
     def render_html_report(self) -> str:
         df_stock, df_opt = self.load_logs()
         
-        # 1. Stock Aggregates
         completed = df_stock.dropna(subset=["buy_price", "sell_price", "buy_date", "sell_date"]).copy()
         stock_stats_html = "<p>No completed trades.</p>"
         if not completed.empty:
@@ -224,7 +231,6 @@ class TradeTracker:
                 formatters = {"Win Rate": "{:.1%}".format, "Avg Days": "{:.1f}".format, "Avg Log Ret": "{:.2%}".format, "Avg Alpha": "{:.2%}".format}
                 stock_stats_html = summary.to_html(classes="styled-table", index=False, formatters=formatters)
 
-        # 2. Option Aggregates
         comp_opts = df_opt.dropna(subset=["entry_price", "exit_price"]).copy()
         opt_agg_html = "<p>No completed option trades.</p>"
         if not comp_opts.empty:
@@ -243,7 +249,6 @@ class TradeTracker:
                 opt_summary["Avg Log Ret"] = opt_summary["Avg Log Ret"].apply(lambda x: f"{x:.2%}")
                 opt_agg_html = opt_summary.to_html(classes="styled-table", index=False)
 
-        # 3. Active Details
         df_opt_disp = df_opt.merge(df_stock[["trade_id", "ticker", "cohort", "user_action"]], on="trade_id", how="left")
         open_stocks = df_stock[df_stock["status"] == "OPEN"].copy()
         open_opts = df_opt_disp[df_opt_disp["status"] == "OPEN"].copy()
@@ -251,11 +256,9 @@ class TradeTracker:
         open_stocks_html = open_stocks[["cohort", "ticker", "signal_date", "buy_price"]].to_html(classes="styled-table", index=False) if not open_stocks.empty else "<p>None</p>"
         opt_detail_html = open_opts[["cohort", "ticker", "strategy", "option_symbol", "entry_price"]].to_html(classes="styled-table", index=False) if not open_opts.empty else "<p>None</p>"
 
-        # 4. CLOSED DETAILS (Restored)
         closed_stocks = df_stock[df_stock["status"] == "CLOSED"].copy().sort_values("drop_date", ascending=False).head(20)
         closed_opts = df_opt_disp[df_opt_disp["status"] == "CLOSED"].copy().sort_values("exit_date", ascending=False).head(60)
         
-        # Formatting for detailed lists
         for df in [closed_stocks, closed_opts]:
             if not df.empty:
                 for col in ["buy_price", "sell_price", "entry_price", "exit_price"]:
