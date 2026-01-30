@@ -52,9 +52,6 @@ class TradeTracker:
         df_stock.to_csv(self.log_path, index=False, encoding="utf-8")
         df_opt.to_csv(self.opt_log_path, index=False, encoding="utf-8")
 
-    # ------------------------------------------------------------------
-    # 1. Signal Processing
-    # ------------------------------------------------------------------
     def process_signals(self, current_top10: pd.DataFrame, prices_df: pd.DataFrame, cohort: str, run_date: date):
         df_stock, df_opt = self.load_logs()
         top_5 = current_top10.head(5).copy()
@@ -70,10 +67,8 @@ class TradeTracker:
         def get_reference_price(ticker):
             try:
                 row = prices_df[prices_df["ticker"] == ticker]
-                if not row.empty:
-                    return float(row.iloc[0]["close"])
-            except Exception:
-                pass
+                if not row.empty: return float(row.iloc[0]["close"])
+            except Exception: pass
             return 0.0
 
         for t in new_buys:
@@ -116,9 +111,6 @@ class TradeTracker:
                     "status": "OPEN"
                 })
 
-    # ------------------------------------------------------------------
-    # 2. Price Resolution
-    # ------------------------------------------------------------------
     async def resolve_prices(self):
         df_stock, df_opt = self.load_logs()
         p_service = PriceService()
@@ -165,7 +157,6 @@ class TradeTracker:
 
         self.save_logs(df_stock, df_opt)
 
-        # Option Resolution
         df_stock, df_opt = self.load_logs()
         merged = df_opt.merge(df_stock[["trade_id", "buy_date", "sell_date"]], on="trade_id", how="left")
         
@@ -209,13 +200,10 @@ class TradeTracker:
             except: pass
         return None
 
-    # ------------------------------------------------------------------
-    # 3. HTML Report
-    # ------------------------------------------------------------------
     def render_html_report(self) -> str:
         df_stock, df_opt = self.load_logs()
         
-        # Stock Summary
+        # 1. Stock Aggregates
         completed = df_stock.dropna(subset=["buy_price", "sell_price", "buy_date", "sell_date"]).copy()
         stock_stats_html = "<p>No completed trades.</p>"
         if not completed.empty:
@@ -236,7 +224,7 @@ class TradeTracker:
                 formatters = {"Win Rate": "{:.1%}".format, "Avg Days": "{:.1f}".format, "Avg Log Ret": "{:.2%}".format, "Avg Alpha": "{:.2%}".format}
                 stock_stats_html = summary.to_html(classes="styled-table", index=False, formatters=formatters)
 
-        # Options Summary
+        # 2. Option Aggregates
         comp_opts = df_opt.dropna(subset=["entry_price", "exit_price"]).copy()
         opt_agg_html = "<p>No completed option trades.</p>"
         if not comp_opts.empty:
@@ -250,18 +238,32 @@ class TradeTracker:
                 opt_summary = comp_opts.groupby(["cohort", "user_action", "strategy"]).agg({
                     "option_symbol": "count", "win": "mean", "log_ret": "mean"
                 }).reset_index()
-                opt_summary.columns = ["Cohort", "Stock Action", "Strategy", "Count", "Win Rate", "Avg Log Return"]
+                opt_summary.columns = ["Cohort", "Stock Action", "Strategy", "Count", "Win Rate", "Avg Log Ret"]
                 opt_summary["Win Rate"] = opt_summary["Win Rate"].apply(lambda x: f"{x:.1%}")
-                opt_summary["Avg Log Return"] = opt_summary["Avg Log Return"].apply(lambda x: f"{x:.2%}")
+                opt_summary["Avg Log Ret"] = opt_summary["Avg Log Ret"].apply(lambda x: f"{x:.2%}")
                 opt_agg_html = opt_summary.to_html(classes="styled-table", index=False)
 
-        # Detail sections for Active Positions
+        # 3. Active Details
         df_opt_disp = df_opt.merge(df_stock[["trade_id", "ticker", "cohort", "user_action"]], on="trade_id", how="left")
         open_stocks = df_stock[df_stock["status"] == "OPEN"].copy()
         open_opts = df_opt_disp[df_opt_disp["status"] == "OPEN"].copy()
         
         open_stocks_html = open_stocks[["cohort", "ticker", "signal_date", "buy_price"]].to_html(classes="styled-table", index=False) if not open_stocks.empty else "<p>None</p>"
         opt_detail_html = open_opts[["cohort", "ticker", "strategy", "option_symbol", "entry_price"]].to_html(classes="styled-table", index=False) if not open_opts.empty else "<p>None</p>"
+
+        # 4. CLOSED DETAILS (Restored)
+        closed_stocks = df_stock[df_stock["status"] == "CLOSED"].copy().sort_values("drop_date", ascending=False).head(20)
+        closed_opts = df_opt_disp[df_opt_disp["status"] == "CLOSED"].copy().sort_values("exit_date", ascending=False).head(60)
+        
+        # Formatting for detailed lists
+        for df in [closed_stocks, closed_opts]:
+            if not df.empty:
+                for col in ["buy_price", "sell_price", "entry_price", "exit_price"]:
+                    if col in df.columns:
+                        df[col] = df[col].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "-")
+
+        closed_stk_html = closed_stocks[["cohort", "ticker", "buy_date", "buy_price", "drop_date", "sell_price"]].to_html(classes="styled-table", index=False) if not closed_stocks.empty else "<p>None</p>"
+        closed_opt_html = closed_opts[["cohort", "ticker", "strategy", "option_symbol", "entry_price", "exit_date", "exit_price"]].to_html(classes="styled-table", index=False) if not closed_opts.empty else "<p>None</p>"
 
         tpl = Template("""
         <!DOCTYPE html>
@@ -273,6 +275,8 @@ class TradeTracker:
                 body { font-family: -apple-system, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; color: #333; background: #fdfdfd; }
                 h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
                 h2 { margin-top: 40px; background: #f4f4f4; padding: 10px; border-left: 5px solid #2980b9; }
+                details { margin-top: 10px; border: 1px solid #eee; padding: 10px; border-radius: 4px; }
+                summary { font-weight: bold; cursor: pointer; }
                 .styled-table { border-collapse: collapse; margin: 15px 0; font-size: 0.9em; width: 100%; }
                 .styled-table th { background-color: #2c3e50; color: #ffffff; text-align: left; padding: 8px; }
                 .styled-table td { border-bottom: 1px solid #ddd; padding: 8px; }
@@ -281,14 +285,17 @@ class TradeTracker:
         <body>
             <h1>📈 Performance Dashboard</h1>
             <h2>📊 Aggregate Performance</h2>
-            <h3>Stocks (Alpha vs SPY)</h3>
-            {{ stock_stats_html | safe }}
-            <h3>Options (Log Returns)</h3>
-            {{ opt_agg_html | safe }}
+            <h3>Stocks (Alpha vs SPY)</h3> {{ stock_stats_html | safe }}
+            <h3>Options (Log Returns)</h3> {{ opt_agg_html | safe }}
+            
             <h2>🟢 Active Positions</h2>
-            <h3>Stocks</h3> {{ open_stocks_html | safe }}
-            <h3>Options</h3> {{ opt_detail_html | safe }}
+            <details open><summary>Active Stocks</summary>{{ open_stocks_html | safe }}</details>
+            <details><summary>Active Options</summary>{{ opt_detail_html | safe }}</details>
+
+            <h2>🔴 Closed Positions (Recent)</h2>
+            <details><summary>Recently Closed Stocks (Last 20)</summary>{{ closed_stk_html | safe }}</details>
+            <details><summary>Recently Closed Options (Last 60)</summary>{{ closed_opt_html | safe }}</details>
         </body>
         </html>
         """)
-        return tpl.render(stock_stats_html=stock_stats_html, opt_agg_html=opt_agg_html, open_stocks_html=open_stocks_html, opt_detail_html=opt_detail_html)
+        return tpl.render(stock_stats_html=stock_stats_html, opt_agg_html=opt_agg_html, open_stocks_html=open_stocks_html, opt_detail_html=opt_detail_html, closed_stk_html=closed_stk_html, closed_opt_html=closed_opt_html)
