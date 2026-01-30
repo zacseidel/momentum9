@@ -187,27 +187,40 @@ class TradeTracker:
                         df_opt.loc[mask, "exit_price"] = price
 
         self.save_logs(df_stock, df_opt)
-    
+
     async def _fetch_option_price(self, client, symbol, date_str):
         base = date.fromisoformat(str(date_str))
+        
         for i in range(1, 6):
             t = base + timedelta(days=i)
-            if t > date.today(): break
-            t_str = t.isoformat()
             
-            # Rate limit enforcement
-            print(f"      zzz Waiting {API_WAIT_SECONDS}s for Polygon API limits...")
+            # 1. Skip Weekends immediately without sleeping
+            if t.weekday() >= 5: # 5 = Saturday, 6 = Sunday
+                continue
+                
+            if t > date.today(): 
+                break
+                
+            # 2. Enforce Rate Limit only when we are about to make a real call
+            print(f"      zzz Waiting {API_WAIT_SECONDS}s for Polygon API...")
             await asyncio.sleep(API_WAIT_SECONDS)
             
+            t_str = t.isoformat()
             url = f"https://api.polygon.io/v2/aggs/ticker/{symbol}/range/1/day/{t_str}/{t_str}?adjusted=true&apiKey={POLYGON_KEY}"
+            
             try:
                 resp = await client.get(url, timeout=5)
                 if resp.status_code == 200:
                     res = resp.json().get("results", [])
-                    if res: return res[0]["c"]
-            except: pass
+                    if res: 
+                        return res[0]["c"] # Success!
+                    else:
+                        print(f"      ℹ️ No data for {t_str}, trying next day...")
+            except Exception as e:
+                print(f"      ⚠️ Request error: {e}")
+                
         return None
-
+        
     def render_html_report(self) -> str:
         df_stock, df_opt = self.load_logs()
         
