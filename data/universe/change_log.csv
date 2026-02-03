@@ -941,3 +941,5 @@ date,cohort,action,symbol
 2026-01-20,sp500,add,AMCR
 2026-01-23,sp400,drop,FYBR
 2026-01-27,sp400,add,SARO
+2026-02-03,sp400,add,TTMI
+2026-02-03,sp400,drop,CIVI
