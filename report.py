@@ -148,6 +148,9 @@ class ReportService:
     # 2. Data Gathering (Dropped Tickers, Universe Changes, Stats)
     # ------------------------------------------------------------------
     def _get_dropped_tickers(self, cohort: str, current_tickers: list, run_date: date) -> list:
+        # Munger strategy is volatile/opportunistic, so "dropped" logic is less relevant
+        if cohort == "munger": return []
+        
         table_name = f"top10_{cohort}"
         current_set = set(current_tickers)
         with sqlite3.connect(self.db_path) as conn:
@@ -221,9 +224,10 @@ class ReportService:
         
         sections = {} 
         
+        # We need to process 'munger' differently if it exists, or just loop through all
         for cohort, df in top_picks.items():
             if df.empty:
-                sections[cohort] = {"summary": "<p>No data.</p>", "cards": ""}
+                sections[cohort] = {"summary": "<p style='color:#777; font-style:italic;'>No active signals this week.</p>", "cards": ""}
                 continue
             
             enriched_df = self._enrich_data(df, cohort, target_dates)
@@ -242,7 +246,9 @@ class ReportService:
             meta = pd.read_sql(f"SELECT * FROM company_metadata WHERE ticker IN ({','.join(['?']*len(tickers))})", conn, params=tickers)
             news = pd.read_sql(f"SELECT * FROM company_news WHERE ticker IN ({','.join(['?']*len(tickers))}) ORDER BY published_utc DESC", conn, params=tickers)
             
+            # For prices, we might need them, but Munger/Momentum might already have price in the DF
             latest_date = target_dates["latest_trading"]
+            # Fallback price fetch
             prices = pd.read_sql(f"SELECT ticker, close FROM daily_prices WHERE date = ? AND ticker IN ({','.join(['?']*len(tickers))})", 
                                conn, params=[latest_date] + tickers)
         
@@ -254,7 +260,15 @@ class ReportService:
             t = row["ticker"]
             info = meta_dict.get(t, {})
             headlines = news[news["ticker"] == t].head(3).to_dict("records")
-            curr_price = price_dict.get(t, 0.0)
+            
+            # Use price from DB if not in row, or format what's in row
+            if "price" in row:
+                # If it's already a string (formatted in ranking.py), keep it. 
+                # Otherwise format it.
+                curr_price = row["price"]
+            else:
+                raw_price = price_dict.get(t, 0.0)
+                curr_price = f"${raw_price:.2f}"
             
             desc_text = info.get("description") or "No description available."
             name_text = info.get("name") or t
@@ -263,13 +277,14 @@ class ReportService:
             if plot_stock_chart:
                 fig = None
                 try:
-                    print(f"   📈 Generating chart for {t}...")
+                    # print(f"   📈 Generating chart for {t}...")
                     fig, _ = plot_stock_chart(t, save_path=None)
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
-                    buf.seek(0)
-                    chart_b64 = base64.b64encode(buf.read()).decode()
-                    chart_uri = f"data:image/png;base64,{chart_b64}"
+                    if fig:
+                        buf = io.BytesIO()
+                        fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+                        buf.seek(0)
+                        chart_b64 = base64.b64encode(buf.read()).decode()
+                        chart_uri = f"data:image/png;base64,{chart_b64}"
                 except Exception as e:
                     print(f"      ⚠️ Chart failed for {t}: {e}")
                 finally:
@@ -287,7 +302,7 @@ class ReportService:
                 **row.to_dict(), 
                 "name": name_text,
                 "description": desc_text,
-                "price": f"${curr_price:.2f}",
+                "price": curr_price,
                 "headlines": headlines,
                 "chart_uri": chart_uri,
                 "streak_html": streak_html,
@@ -303,13 +318,16 @@ class ReportService:
             anchor = f"{cohort}-{s['ticker']}"
             streak_color = "#006400" if "since" in s['streak_html'] else "#0000FF"
             
-            w_ret = s['last_week_return']
-            if w_ret:
-                if not w_ret.startswith("-") and not w_ret.startswith("+"): w_ret = f"+{w_ret}"
-                ret_color = "#c42020" if "-" in w_ret else "#006400"
-                w_ret_span = f"<span style='color:{ret_color}'>{w_ret}</span>"
+            if cohort == "munger":
+                # Munger specific summary line
+                # Shows "Discount" (pct below 200) instead of returns
+                extra_info = f"200SMA: {s.get('sma_200','N/A')}"
             else:
-                w_ret_span = "N/A"
+                # Standard Momentum
+                w_ret = s.get('last_week_return', 'N/A')
+                if w_ret != 'N/A' and not w_ret.startswith("-") and not w_ret.startswith("+"): w_ret = f"+{w_ret}"
+                ret_color = "#c42020" if "-" in w_ret else "#006400"
+                extra_info = f"{s.get('current_return','')} 12M, <span style='color:{ret_color}'>{w_ret}</span> 1W"
 
             line = f"""
                 <div style="margin-bottom: 4px;">
@@ -317,14 +335,14 @@ class ReportService:
                         {s['ticker']}
                     </a> 
                     <span style="color:#555;">
-                        ({s['price']} | {s['current_return']} 12M, {w_ret_span} 1W) - {s['streak_html']}
+                        ({s['price']} | {extra_info}) - {s['streak_html']}
                     </span>
                 </div>
             """
             summary_lines.append(line)
         
-        # 2. Dropped Summary
-        if dropped_stats:
+        # 2. Dropped Summary (Only for momentum cohorts)
+        if dropped_stats and cohort != "munger":
             summary_lines.append(f"<div style='margin-top:10px; padding-top:10px; border-top:1px dashed #ccc; color:#888; font-size:0.9em;'>")
             dropped_items = []
             for d in dropped_stats:
@@ -338,6 +356,7 @@ class ReportService:
         summary_html = "".join(summary_lines)
 
         # 3. Detailed Cards
+        # We use a single template with conditional logic inside
         card_tpl = Template("""
         <div id="{{ cohort }}-{{ ticker }}" style="border-bottom: 2px solid #eee; padding: 30px 0;">
             <div style="display:flex; justify-content:space-between; align-items:baseline;">
@@ -345,7 +364,7 @@ class ReportService:
                     {{ ticker }} <span style="font-weight:normal; color:#555;">— {{ name }}</span> <span style="color:#333;">{{ price }}</span>
                 </h3>
                 <span style="font-size:0.9em; color:#666; background:#f5f5f5; padding: 4px 8px; border-radius:4px;">
-                    Rank Change: <strong>{{ rank_change }}</strong> | {{ streak_html }}
+                    {% if cohort != 'munger' %}Rank Change: <strong>{{ rank_change }}</strong> |{% endif %} {{ streak_html }}
                 </span>
             </div>
             
@@ -353,8 +372,14 @@ class ReportService:
                 <div style="flex: 1; min-width: 300px; max-width: 500px;">
                     <div style="background:#fafafa; padding:15px; border-radius:6px; margin-bottom:15px; border:1px solid #eee;">
                         <p style="margin:0; font-size: 1.1em;">
-                            <strong>12-Mo Return:</strong> <span style="color:green; font-size:1.2em;">{{ current_return }}</span><br>
-                            <span style="color:#666; font-size:0.9em;">Last Week: {{ last_week_return }}</span>
+                            {% if cohort == 'munger' %}
+                                <strong>Strategy:</strong> <span style="color:#0066cc;">Mean Reversion (Munger)</span><br>
+                                <span style="color:#666; font-size:0.9em;">200-Day Avg: {{ sma_200 }} | 10-Day Avg: {{ sma_10 }}</span><br>
+                                <span style="color:#666; font-size:0.9em;">Price Dip: {{ pct_below_200 }} below 200MA</span>
+                            {% else %}
+                                <strong>12-Mo Return:</strong> <span style="color:green; font-size:1.2em;">{{ current_return }}</span><br>
+                                <span style="color:#666; font-size:0.9em;">Last Week: {{ last_week_return }}</span>
+                            {% endif %}
                         </p>
                     </div>
 
@@ -463,6 +488,12 @@ class ReportService:
             </table>
             {% endif %}
 
+            {% if munger_summary %}
+            <h2 id="summary-munger" style="border-left-color: #0066cc;">🧠 Munger Strategy (Mean Reversion)</h2>
+            <p style="font-size:0.9em; color:#666;">Top 50 stocks that dipped below 200-day avg (last 10d) and recovered above 10-day avg.</p>
+            {{ munger_summary | safe }}
+            {% endif %}
+
             <h2 id="summary-megacap">💎 Mega Cap Leaders</h2>
             {{ mega_summary | safe }}
 
@@ -473,6 +504,11 @@ class ReportService:
             {{ mdy_summary | safe }}
             
             <hr style="margin: 60px 0; border: 0; border-top: 1px solid #eee;">
+
+            {% if munger_cards %}
+            <h2>🧠 Munger Details</h2>
+            {{ munger_cards | safe }}
+            {% endif %}
 
             <h2>💎 Mega Cap Details</h2>
             {{ mega_cards | safe }}
@@ -510,6 +546,7 @@ class ReportService:
             date=run_date.strftime("%B %d, %Y"),
             voo=voo_stats,
             universe_changes=universe_changes,
+            munger_summary=sections.get('munger', {}).get('summary', ''), munger_cards=sections.get('munger', {}).get('cards', ''),
             mega_summary=sections.get('megacap', {}).get('summary', ''), mega_cards=sections.get('megacap', {}).get('cards', ''),
             spy_summary=sections.get('sp500', {}).get('summary', ''), spy_cards=sections.get('sp500', {}).get('cards', ''),
             mdy_summary=sections.get('sp400', {}).get('summary', ''), mdy_cards=sections.get('sp400', {}).get('cards', ''),
