@@ -40,22 +40,26 @@ class UniverseService:
         sp500_df, sp400_df = await self._download_all()
         print(f"🟢 Downloaded SP500 rows: {len(sp500_df)} | SP400 rows: {len(sp400_df)}")
 
-        # 2. Derive Megacap (Top 25 by weight, merging GOOG/GOOGL)
-        megacap_df = self._derive_megacap(sp500_df)
-        print(f"🟢 Derived megacap list (top-25 by weight)")
+        # 2. Derive Sub-Cohorts (MegaCap = Top 25, Munger = Top 50)
+        # Note: We use a helper to properly merge GOOG/GOOGL before ranking
+        megacap_df = self._derive_top_weighted(sp500_df, n=25)
+        munger_df = self._derive_top_weighted(sp500_df, n=50)
+        
+        print(f"🟢 Derived MegaCap (Top 25) and Munger (Top 50) lists")
 
         # 3. Write to disk and log changes
         for cohort, new_df in {
             "sp500": sp500_df,
             "sp400": sp400_df,
             "megacap": megacap_df,
+            "munger": munger_df,
         }.items():
             adds, drops = self._write_and_log(cohort, new_df, as_of)
             print(f"   {cohort.upper():7} -> wrote {len(new_df):4} rows | +{len(adds):<2} / -{len(drops):<2}")
 
         print("🟢 Universe sync complete! \u2713")
 
-    def get_cohort(self, cohort: Literal["megacap", "sp500", "sp400"] = "sp500") -> pd.DataFrame:
+    def get_cohort(self, cohort: Literal["megacap", "sp500", "sp400", "munger"] = "sp500") -> pd.DataFrame:
         """Read a cleaned cohort file from disk."""
         return pd.read_csv(self.data_dir / f"{cohort}.csv")
 
@@ -84,7 +88,7 @@ class UniverseService:
         for ticker, res in zip(["SPY", "MDY"], results):
             if isinstance(res, Exception):
                 print(f"🔴 Error fetching {ticker}: {res}")
-                # Return empty DF on failure to prevent crash, or raise if you prefer strictness
+                # Return empty DF on failure to prevent crash
                 final_dfs.append(pd.DataFrame(columns=["symbol", "name", "weight"]))
             else:
                 final_dfs.append(res)
@@ -101,7 +105,6 @@ class UniverseService:
         
         # Read the first ~20 rows to find the header. 
         # SSGA files often start with 4-6 lines of disclaimer/date info.
-        # We look for the row that contains 'Ticker' and 'Weight'.
         raw_head = pd.read_excel(buf, engine="openpyxl", nrows=20, header=None)
         
         header_row_idx = None
@@ -123,7 +126,6 @@ class UniverseService:
         df.columns = df.columns.str.strip()
 
         # Normalize columns map
-        # SSGA sometimes uses "Ticker" or "Symbol", "Name" or "Security Name"
         col_map = {}
         for c in df.columns:
             cl = c.lower()
@@ -146,7 +148,6 @@ class UniverseService:
         df = df[df["symbol"].astype(str).str.strip() != ""] # Remove empty strings
         
         # Clean Weights (remove % sign if present and convert to float)
-        # SSGA weights are usually percentage (e.g. 6.54 for 6.54%)
         def clean_weight(val):
             if isinstance(val, (int, float)):
                 return val
@@ -158,8 +159,8 @@ class UniverseService:
         
         return df.reset_index(drop=True)
 
-    def _derive_megacap(self, sp500: pd.DataFrame) -> pd.DataFrame:
-        """Combine GOOG/GOOGL and return top 25 by weight."""
+    def _derive_top_weighted(self, sp500: pd.DataFrame, n: int) -> pd.DataFrame:
+        """Combine GOOG/GOOGL and return top N by weight."""
         df = sp500.copy()
         
         # Handle Google Dual Class
@@ -176,8 +177,8 @@ class UniverseService:
             }])
             df = pd.concat([df, goog_entry], ignore_index=True)
 
-        # Sort and take top 25
-        return df.sort_values("weight", ascending=False).head(25).reset_index(drop=True)
+        # Sort and take top N
+        return df.sort_values("weight", ascending=False).head(n).reset_index(drop=True)
 
     def _write_and_log(self, cohort: str, new_df: pd.DataFrame, as_of: date):
         file_path = self.data_dir / f"{cohort}.csv"
