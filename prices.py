@@ -46,7 +46,6 @@ class PriceService:
         try:
             sp500 = u.get_cohort("sp500")
             sp400 = u.get_cohort("sp400")
-            # Munger is a subset of SP500, but we load it to be safe if logic changes
             try:
                 munger = u.get_cohort("munger")
                 munger_set = set(munger.symbol)
@@ -90,36 +89,36 @@ class PriceService:
         """
         print(f"🕵️ Checking history depth for {len(tickers)} tickers...")
         
-        # We check back 'days_needed' + buffer
         start_check = date.today() - timedelta(days=days_needed)
         start_iso = start_check.isoformat()
         
-        # Track how many we actually fetch to manage rate limits
         fetches_made = 0
 
         for ticker in tickers:
             # 1. Check count of rows in DB since start date
             with sqlite3.connect(self.db_path) as conn:
-                count = conn.execute(
-                    "SELECT count(*) FROM daily_prices WHERE ticker=? AND date >= ?", 
-                    (ticker, start_iso)
-                ).fetchone()[0]
+                try:
+                    count = conn.execute(
+                        "SELECT count(*) FROM daily_prices WHERE ticker=? AND date >= ?", 
+                        (ticker, start_iso)
+                    ).fetchone()[0]
+                except Exception:
+                    count = 0
             
-            # Approx trading days is ~65% of calendar days (252/365). 
-            # If we have less than 200 rows for 300 days, we likely have gaps.
+            # If we have less than ~60% of the needed days, we assume gaps/missing data
             threshold = int(days_needed * 0.6) 
 
             if count < threshold:
                 print(f"   📉 {ticker}: Found {count} rows (need >{threshold}). Backfilling...")
-                await self._backfill_ticker(ticker, start_check, date.today())
-                fetches_made += 1
+                success = await self._backfill_ticker(ticker, start_check, date.today())
                 
-                # POLYGON FREE TIER LIMIT: 5 calls / minute.
-                # We sleep 15s after every call to be safe (4 calls/min).
-                print("      ⏳ Sleeping 15s for rate limit...")
-                await asyncio.sleep(15)
+                if success:
+                    fetches_made += 1
+                    # POLYGON FREE TIER LIMIT: 5 calls / minute.
+                    # We sleep 15s after every call to be safe (4 calls/min).
+                    print("      ⏳ Sleeping 15s for rate limit...")
+                    await asyncio.sleep(15)
             else:
-                # Optional: Verbose logging
                 # print(f"   ✅ {ticker}: History ok ({count} rows).")
                 pass
         
@@ -144,7 +143,6 @@ class PriceService:
         target_set = set(tickers) | {"VOO"}
         return df[df['ticker'].isin(target_set)].copy()
     
-    # New method to retrieve full history for calculation
     def get_ticker_history(self, ticker: str, lookback_days: int = 365) -> pd.DataFrame:
         """Synchronous fetch from SQLite for a single ticker's time series."""
         start_iso = (date.today() - timedelta(days=lookback_days)).isoformat()
@@ -187,7 +185,6 @@ class PriceService:
         raise RuntimeError(f"No market data found near {target}")
 
     async def _fetch_and_save_benchmark(self, ticker: str, d: date):
-        """Single day fetch for VOO to guarantee it exists."""
         with sqlite3.connect(self.db_path) as conn:
             exists = conn.execute("SELECT 1 FROM daily_prices WHERE ticker=? AND date=?", 
                                 (ticker, d.isoformat())).fetchone()
@@ -195,52 +192,79 @@ class PriceService:
             return
 
         url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{d}/{d}?adjusted=true&apiKey={API_KEY}"
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                res = resp.json().get("results", [])
-                if res:
-                    r = res[0]
-                    self._save_single_row(ticker, d.isoformat(), r)
-                    print(f"      Use separate fetch for {ticker} on {d}")
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            try:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    res = resp.json().get("results", [])
+                    if res:
+                        r = res[0]
+                        self._save_single_row(ticker, d.isoformat(), r)
+                        print(f"      Use separate fetch for {ticker} on {d}")
+            except Exception:
+                pass
 
-    async def _backfill_ticker(self, ticker: str, start_date: date, end_date: date):
-        """Fetch continuous range of data for a single ticker."""
-        # API: /v2/aggs/ticker/{stocksTicker}/range/{multiplier}/{timespan}/{from}/{to}
+    async def _backfill_ticker(self, ticker: str, start_date: date, end_date: date) -> bool:
+        """
+        Fetch continuous range of data for a single ticker.
+        Returns True if successful, False if failed.
+        """
         url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_date}/{end_date}?adjusted=true&apiKey={API_KEY}"
         
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                results = resp.json().get("results", [])
-                if results:
-                    rows = []
-                    for r in results:
-                        # Polygon returns timestamps in millis for Aggs
-                        ts_date = pd.to_datetime(r.get("t"), unit="ms").date().isoformat()
-                        rows.append((
-                            ticker, ts_date, 
-                            r.get("o"), r.get("h"), r.get("l"), r.get("c"), r.get("v")
-                        ))
-                    
-                    with sqlite3.connect(self.db_path) as conn:
-                        conn.executemany("""
-                            INSERT OR REPLACE INTO daily_prices (ticker, date, open, high, low, close, volume)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, rows)
-                    print(f"      💾 Backfilled {len(rows)} rows for {ticker}")
+        # UPDATED: Timeout set to 15s to catch heavy stocks like INTC without hanging forever
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            try:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    results = resp.json().get("results", [])
+                    if results:
+                        rows = []
+                        for r in results:
+                            # Polygon returns timestamps in millis for Aggs
+                            ts_date = pd.to_datetime(r.get("t"), unit="ms").date().isoformat()
+                            rows.append((
+                                ticker, ts_date, 
+                                r.get("o"), r.get("h"), r.get("l"), r.get("c"), r.get("v")
+                            ))
+                        
+                        with sqlite3.connect(self.db_path) as conn:
+                            conn.executemany("""
+                                INSERT OR REPLACE INTO daily_prices (ticker, date, open, high, low, close, volume)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """, rows)
+                        print(f"      💾 Backfilled {len(rows)} rows for {ticker}")
+                        return True
+                    else:
+                        print(f"      ⚠️ No history found for {ticker}")
+                        return False
+                elif resp.status_code == 429:
+                    print(f"      🔴 Rate Limited on {ticker}")
+                    return False
+                else:
+                    print(f"      🔴 Error fetching {ticker}: {resp.status_code}")
+                    return False
+            except httpx.TimeoutException:
+                print(f"      🔴 Timeout fetching {ticker} (skipped)")
+                return False
+            except Exception as e:
+                print(f"      🔴 Exception fetching {ticker}: {e}")
+                return False
 
     async def _fetch_polygon_grouped(self, d: date) -> List[dict]:
         url = f"https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/{d}?adjusted=true&apiKey={API_KEY}"
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(url)
-            if resp.status_code == 429:
-                print("   ⚠️ Rate limited. Pausing 65s...")
-                await asyncio.sleep(65) 
-                return await self._fetch_polygon_grouped(d)
-            if resp.status_code != 200:
-                return [] 
-            return resp.json().get("results", [])
+        # UPDATED: Timeout set to 15s
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            try:
+                resp = await client.get(url)
+                if resp.status_code == 429:
+                    print("   ⚠️ Rate limited. Pausing 65s...")
+                    await asyncio.sleep(65) 
+                    return await self._fetch_polygon_grouped(d)
+                if resp.status_code != 200:
+                    return [] 
+                return resp.json().get("results", [])
+            except Exception:
+                return []
 
     def _save_to_db(self, results: List[dict], date_str: str):
         if not results: return
