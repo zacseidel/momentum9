@@ -1,90 +1,82 @@
-# Momentum Strategy Engine
+# Quantitative Strategy Engine
 
-**Project Status:** Active / v4 Multi-Strategy Architecture
-**Last Update:** January 2026
-**Primary Goal:** Automated weekly stock market momentum reporting, performance tracking, and static website generation.
+**Project Status:** Active / v5 Dual-Engine Architecture
+**Last Update:** February 2026
+**Primary Goal:** Automated weekly stock market reporting, multi-strategy execution, and performance tracking.
 
 ## 📖 Project Overview
-This project implements a quantitative momentum strategy focused on three cohorts: **S&P 500**, **S&P 400 (MidCap)**, and **MegaCap** (Top 25 S&P 500 by weight).
+This project implements a quantitative trading system comprising two distinct engines:
+1.  **Momentum Engine (Growth):** Focuses on **S&P 500**, **S&P 400 (MidCap)**, and **MegaCap** (Top 25).
+2.  **Munger Engine (Value/Reversion):** Focuses on high-quality **Top 50 Market Cap** stocks trading at a discount.
 
 It runs a weekly pipeline that:
 1.  **Syncs** the universe of stocks from State Street (SSGA).
-2.  **Downloads** price history using Polygon.io (with robust rate-limiting and local SQLite caching).
-3.  **Ranks** stocks based on 12-month momentum, volatility-adjusted returns, and rank stability.
-4.  **Tracks** "Streaks" and logs "Dropped" tickers.
-5.  **Generates** a static website (`/docs`) with historical reports, performance dashboards, and a trends blog.
-6.  **Executes** a multi-strategy backtest:
-    * **Stocks:** Tracks active Buy/Sell signals for the Top 5 picks.
-    * **Options:** "Shadow tracks" three specific option strategies (100d Call, LEAP, Short Put) for every stock pick to evaluate leverage vs. pure equity performance.
+2.  **Downloads** price history using Polygon.io (optimized for free-tier rate limits).
+3.  **Ranks & Filters** stocks using cohort-specific logic (Momentum vs. Mean Reversion).
+4.  **Generates** a static website (`/docs`) with interactive reports and dashboards.
+5.  **Executes** a multi-strategy backtest:
+    * **Stocks:** Tracks active Buy/Sell signals with hybrid exit logic (Rank-based vs. Time-based).
+    * **Options:** "Shadow tracks" three specific option strategies (100d Call, LEAP, Short Put) for every stock pick.
+
+---
+
+## 🧠 Strategy Logic
+
+### 1. Momentum Engine
+* **Cohorts:** MegaCap, S&P 500, S&P 400.
+* **Signal:** High 12-month volatility-adjusted returns with momentum persistence.
+* **Selection:** Top 5 per cohort.
+* **Exit Rule:** **Rank-Based.** Sell immediately when a stock drops out of the Top 5.
+
+### 2. Munger Engine
+* **Cohort:** Top 50 Stocks by Market Cap.
+* **Signal:** "Quality at a Discount."
+    * *Dip:* Price dipped below the **200-day Moving Average** within the last 10 days.
+    * *Recovery:* Price has recovered above the **10-day Moving Average**.
+* **Selection:** Opportunistic (All valid signals).
+* **Exit Rule:** **Time-Based.** Hold for a minimum of **365 days** to allow for mean reversion, ignoring weekly rank fluctuations.
 
 ---
 
 ## 🏗 System Architecture (AI Context)
 
 ### Data Flow
-`Universe` → `Prices` → `Ranking` → `Top 5 Signal` → `Option Picker` → `CSV Logs` → `Site Builder` → `GitHub Pages`
+`Universe` → `Prices (Deep History)` → `Ranking` → `Signal Generation` → `Tracker (Hybrid Exits)` → `Option Picker` → `Site Builder`
 
 ### Core Modules
 
 #### 1. Orchestration
 * **`run_report.py`**: The entry point.
     * **Role:** Async orchestrator.
-    * **Logic:** Syncs universe → Resolves dates → Fetches Prices → Calculates Ranks → Generates Report → **Triggers Option Picker** → Updates Tracker → Builds Website.
-    * **Key Flag:** Uses `matplotlib.use("Agg")` to prevent memory leaks on headless servers.
+    * **Logic:** Syncs universe → Resolves dates → **Pre-heats Data** (fetches full history for winners) → Calculates Ranks → Updates Tracker → Builds Website.
+    * **Key Feature:** Ensures all chart data is in SQLite before report generation to prevent API throttling.
 
 #### 2. Data Ingestion
 * **`universe.py`**:
-    * **Source:** Direct Excel downloads from SSGA (SPY, MDY).
-    * **Logic:** Dynamic header detection to handle SSGA format changes.
-    * **Output:** `data/universe/{cohort}.csv` and `change_log.csv`.
+    * **Logic:** Derives `munger` cohort (Top 50) and `megacap` (Top 25) from SSGA raw files.
 * **`prices.py`**:
-    * **Source:** Polygon.io.
-    * **Logic:** Uses **Grouped Daily** endpoint for bulk efficiency.
-    * **Resiliency:** Auto-backtracks if a target date is a holiday.
+    * **Source:** Polygon.io (Grouped Daily + Aggregates).
+    * **Smart Backfill:** Includes `ensure_history_depth()` to fetch 300+ days of history for Munger candidates (needed for SMA200) vs. sparse snapshots for Momentum.
 
 #### 3. Analytics & Strategy
 * **`ranking.py`**:
-    * **Strategy:** (Current Close - 1Y Close) / 1Y Close.
-    * **Filter:** `Current Rank <= Previous Month Rank` (Momentum Persistence).
-    * **Storage:** `top10_{cohort}` tables in SQLite.
+    * **Momentum Logic:** `(Current - 1Y) / 1Y` with persistence checks.
+    * **Munger Logic:** Vectorized Pandas check for `(Low < SMA200) & (Close > SMA10)`.
 * **`strategies.py` (The Option Picker)**:
-    * **Role:** Finds the "Best Fit" option contract for a specific stock signal.
-    * **Logic:** Scans the option chain to minimize distance to target parameters (e.g., "Find call closest to 100 DTE and 105% Strike").
-    * **Strategies Tracked:**
-        1.  **100d Call:** ~100 DTE, 5% OTM.
-        2.  **500d LEAP:** ~500 DTE, 10% OTM.
-        3.  **Short Put:** ~30 DTE, ATM.
+    * **Role:** Auto-selects specific option contracts (e.g., "NVDA 260515 C 140") for every new stock signal.
+    * **Strategies:** 100d Call (5% OTM), LEAP (500d), Short Put (ATM).
 
-#### 4. Visualization & Reporting
-* **`report.py`**:
-    * **Role:** Generates HTML reports with Metadata + News.
-    * **Safe Mode:** Proactive rate-limiting (13s sleep) for Polygon Free Tier.
-    * **Features:** Universe updates table, Dropped Ticker stats, Lightbox charts.
+#### 4. Visualization
+* **`chart_module.py`**:
+    * **Mode:** **Offline**. Reads strictly from `market_data.sqlite`.
+    * **Output:** Generates Matplotlib candle charts with VOO (S&P 500) overlays for the report lightboxes.
 
 #### 5. Portfolio Tracking (`tracker.py`)
 * **Role:** The State Machine for the portfolio.
-* **Dual-Log System:**
-    * **`data/trade_log.csv`**: Tracks the underlying **Stock** trades (Top 5).
-    * **`data/option_log.csv`**: Shadow tracks the 3 associated **Option** strategies for each stock signal.
-* **Price Resolution:** Asynchronously fills "Entry" and "Exit" prices for both stocks (OHLC) and options (Daily Close) using historical snapshots.
-* **Metrics:** Calculates **Average Annualized Log Returns** vs SPY.
-
-#### 6. Static Site Generator (`build_site.py`)
-* **Role:** Converts raw data into a deployable website.
-* **Output:** `docs/` folder (Configured for GitHub Pages).
-* **Logic:** Archives reports, renders Markdown trend blogs, and builds the `index.html` dashboard.
-
----
-
-## 💾 Database & Storage
-
-1.  **SQLite (`data/market_data.sqlite`)**:
-    * `daily_prices`: `(ticker, date)` PK.
-    * `top10_{cohort}`: Historical rankings.
-    * `company_metadata` & `company_news`: Cached API responses.
-2.  **CSV Logs**:
-    * `data/trade_log.csv`: Master record of Stock Buy/Sell signals.
-    * `data/option_log.csv`: Detailed record of specific option contract performance.
+* **Hybrid Exit Logic:**
+    * `if cohort == 'munger'`: Checks if `(Today - Entry_Date) > 365 days`.
+    * `else`: Checks if `ticker not in current_top_5`.
+* **Logs:** Maintains `data/trade_log.csv` (Stocks) and `data/option_log.csv` (Options).
 
 ---
 
@@ -100,39 +92,3 @@ POLYGON_API_KEY=your_key_here
 
 # Initialize Database
 python init_db.py
-```
-
-
-### 2. Weekly Routine (Run on Fridays)
-
-```bash
-python run_report.py
-```
-
-Process:
-
-* Downloads prices/news & generates HTML report.
-* Auto-Picks Options: Identifies specific contract symbols (e.g., NVDA260515C...) for new Top 5 entrants.
-* Backfills Prices: Checks Polygon for the historical prices of any pending trades.
-* Builds Site: Regenerates docs/.
-
-Action: Commit and push the docs/ folder to GitHub to update your live dashboard.
-
-### 3. Active Trading
-
-Stock Signals: Check data/trade_log.csv. Change user_action to BOUGHT if executed.
-
-Option Ideas: Check data/option_log.csv to see which specific contracts the algorithm selected.
-
-### 4. Writing Trends
-
-Create a markdown file in trends/ (e.g., 2026-01-08-volatility.md).
-
-Run the report to publish it to the website.
-
-## 🧠 Key Insights & "Gotchas"
-Data Gaps: Option data is ephemeral. The system "Forward Tracks" (logs the symbol today, tracks it moving forward) because retrieving historical option chains usually requires expensive paid data tiers.
-
-Polygon Rate Limits: The script is optimized for the Free Tier (5 calls/min) but includes sleep timers. Be patient during news fetching.
-
-Site Hosting: Ensure GitHub Pages is set to serve from the /docs folder on the main branch.
