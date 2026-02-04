@@ -149,6 +149,7 @@ class TradeTracker:
         OPTIMIZED: Only attempts to resolve prices for recent trades (< 14 days old).
         Prevents infinite retry loops on broken/old data.
         """
+        return None
         df_stock, df_opt = self.load_logs()
         p_service = PriceService()
         
@@ -264,6 +265,7 @@ class TradeTracker:
         self.save_logs(df_stock, df_opt)
 
     async def _fetch_option_price(self, client, symbol, date_str):
+        return None
         base = date.fromisoformat(str(date_str))
         
         for i in range(1, 6):
