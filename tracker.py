@@ -4,7 +4,7 @@ import asyncio
 import httpx
 import time
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from jinja2 import Template
 from prices import PriceService
 from strategies import OptionPicker
@@ -59,23 +59,17 @@ class TradeTracker:
         df_stock, df_opt = self.load_logs()
         
         # --- 1. Selection Logic ---
-        # Momentum: Only track Top 5 active.
-        # Munger: Track ALL valid signals (rare events).
         if cohort == "munger":
             current_picks = current_top10.copy()
         else:
             current_picks = current_top10.head(5).copy()
             
         current_tickers = set(current_picks["ticker"])
-        
-        # Identify Open Trades
         open_trades = df_stock[(df_stock["cohort"] == cohort) & (df_stock["status"] == "OPEN")]
         open_tickers = set(open_trades["ticker"])
         
-        # --- 2. Buy Logic (Universal) ---
-        # If it's a signal and we don't have it open, BUY.
+        # --- 2. Buy Logic ---
         new_buys = current_tickers - open_tickers
-        
         new_rows = []
         new_opts = []
         
@@ -102,50 +96,35 @@ class TradeTracker:
         if new_opts:
             df_opt = pd.concat([df_opt, pd.DataFrame(new_opts)], ignore_index=True)
 
-        # --- 3. Exit Logic (Divergent) ---
+        # --- 3. Exit Logic ---
         dropping_ids = []
 
         if cohort == "munger":
-            # === STRATEGY: Time-Based Exit (1 Year Hold) ===
-            # We ignore whether it is in 'current_tickers' or not.
-            # We only close if Entry Date was >= 365 days ago.
-            
+            # Time-Based Exit (1 Year)
             for idx, row in open_trades.iterrows():
-                # Determine Entry Date (Fallback to signal_date if buy_date missing)
                 entry_val = row.get("buy_date")
-                if pd.isna(entry_val):
-                    entry_val = row["signal_date"]
-                
+                if pd.isna(entry_val): entry_val = row["signal_date"]
                 try:
                     entry_dt = pd.to_datetime(entry_val).date()
                     days_held = (run_date - entry_dt).days
-                    
                     if days_held >= 365:
                         print(f"   ⏳ Munger Exit ({row['ticker']}): Held for {days_held} days.")
                         dropping_ids.append(row["trade_id"])
-                        
-                except Exception as e:
-                    print(f"   ⚠️ Date parse error for {row['ticker']}: {e}")
-                    continue
+                except Exception: continue
 
         else:
-            # === STRATEGY: Rank-Based Exit (Momentum) ===
-            # Close if it dropped out of the Top list
+            # Rank-Based Exit
             drops_mask = (df_stock["cohort"] == cohort) & \
                          (df_stock["status"] == "OPEN") & \
                          (~df_stock["ticker"].isin(current_tickers))
-            
             if drops_mask.any():
                 dropping_ids = df_stock.loc[drops_mask, "trade_id"].tolist()
 
         # --- 4. Apply Closures ---
         if dropping_ids:
-            # Close Stocks
             stk_mask = df_stock["trade_id"].isin(dropping_ids)
             df_stock.loc[stk_mask, "drop_date"] = run_date
             df_stock.loc[stk_mask, "status"] = "CLOSED"
-            
-            # Close Options
             opt_mask = (df_opt["trade_id"].isin(dropping_ids)) & (df_opt["status"] == "OPEN")
             df_opt.loc[opt_mask, "status"] = "CLOSED"
 
@@ -166,12 +145,33 @@ class TradeTracker:
                 })
 
     async def resolve_prices(self):
+        """
+        OPTIMIZED: Only attempts to resolve prices for recent trades (< 14 days old).
+        Prevents infinite retry loops on broken/old data.
+        """
         df_stock, df_opt = self.load_logs()
         p_service = PriceService()
         
-        needs_buy = df_stock[df_stock["buy_price"].isna() & df_stock["signal_date"].notna()]
-        needs_sell = df_stock[df_stock["sell_price"].isna() & df_stock["drop_date"].notna()]
+        # SAFETY VALVE: Don't look back further than 14 days
+        cutoff_date = date.today() - timedelta(days=14)
+        cutoff_str = cutoff_date.isoformat()
+
+        # --- 1. Stock Prices ---
+        # Filter for missing prices WHERE date is recent
+        needs_buy = df_stock[
+            (df_stock["buy_price"].isna()) & 
+            (df_stock["signal_date"] >= cutoff_str)
+        ]
+        needs_sell = df_stock[
+            (df_stock["sell_price"].isna()) & 
+            (df_stock["drop_date"] >= cutoff_str)
+        ]
         
+        # Log skipped items (optional, for your sanity)
+        skipped_buy = len(df_stock[df_stock["buy_price"].isna()]) - len(needs_buy)
+        if skipped_buy > 0:
+            print(f"   ⚠️ Skipping {skipped_buy} old missing stock BUY prices (older than {cutoff_str})")
+
         async def get_stock_price(ticker, d_str, col, min_date=None, max_date=None):
             base = date.fromisoformat(str(d_str))
             for i in range(1, 6):
@@ -192,31 +192,56 @@ class TradeTracker:
                 except: pass
             return None, None, None
 
-        for i, r in needs_buy.iterrows():
-            drop_dt = date.fromisoformat(str(r["drop_date"])) if pd.notnull(r.get("drop_date")) else None
-            d, v, s = await get_stock_price(r["ticker"], r["signal_date"], "buy_price", max_date=drop_dt)
-            if v: 
-                df_stock.at[i, "buy_date"] = d
-                df_stock.at[i, "buy_price"] = v
-                df_stock.at[i, "spy_buy_price"] = s
+        if not needs_buy.empty:
+            print(f"   🔎 Resolving {len(needs_buy)} recent stock entries...")
+            for i, r in needs_buy.iterrows():
+                drop_dt = date.fromisoformat(str(r["drop_date"])) if pd.notnull(r.get("drop_date")) else None
+                d, v, s = await get_stock_price(r["ticker"], r["signal_date"], "buy_price", max_date=drop_dt)
+                if v: 
+                    df_stock.at[i, "buy_date"] = d
+                    df_stock.at[i, "buy_price"] = v
+                    df_stock.at[i, "spy_buy_price"] = s
 
-        for i, r in needs_sell.iterrows():
-            current_row = df_stock.loc[i]
-            buy_dt = date.fromisoformat(str(current_row["buy_date"])) if pd.notnull(current_row["buy_date"]) else None
-            d, v, s = await get_stock_price(r["ticker"], r["drop_date"], "sell_price", min_date=buy_dt)
-            if v: 
-                df_stock.at[i, "sell_date"] = d
-                df_stock.at[i, "sell_price"] = v
-                df_stock.at[i, "spy_sell_price"] = s
+        if not needs_sell.empty:
+            print(f"   🔎 Resolving {len(needs_sell)} recent stock exits...")
+            for i, r in needs_sell.iterrows():
+                current_row = df_stock.loc[i]
+                buy_dt = date.fromisoformat(str(current_row["buy_date"])) if pd.notnull(current_row["buy_date"]) else None
+                d, v, s = await get_stock_price(r["ticker"], r["drop_date"], "sell_price", min_date=buy_dt)
+                if v: 
+                    df_stock.at[i, "sell_date"] = d
+                    df_stock.at[i, "sell_price"] = v
+                    df_stock.at[i, "spy_sell_price"] = s
 
         self.save_logs(df_stock, df_opt)
 
+        # --- 2. Option Prices ---
         df_stock, df_opt = self.load_logs()
-        merged = df_opt.merge(df_stock[["trade_id", "buy_date", "sell_date"]], on="trade_id", how="left")
+        merged = df_opt.merge(df_stock[["trade_id", "buy_date", "sell_date", "signal_date", "drop_date"]], on="trade_id", how="left")
         
-        needs_entry = merged[merged["entry_price"].isna()]
+        # Use buy_date if avail, else signal_date for cutoff check
+        merged["eff_entry_date"] = merged["buy_date"].fillna(merged["signal_date"])
+        merged["eff_exit_date"] = merged["sell_date"].fillna(merged["drop_date"])
+
+        # Filter Option Entries
+        needs_entry = merged[
+            (merged["entry_price"].isna()) & 
+            (merged["eff_entry_date"] >= cutoff_str)
+        ]
+        
+        # Filter Option Exits
+        needs_exit = merged[
+            (merged["exit_price"].isna()) & 
+            (merged["eff_exit_date"].notna()) & 
+            (merged["eff_exit_date"] >= cutoff_str)
+        ]
+
+        skipped_opt = len(merged[merged["entry_price"].isna()]) - len(needs_entry)
+        if skipped_opt > 0:
+            print(f"   ⚠️ Skipping {skipped_opt} old missing option prices (older than {cutoff_str})")
+
         if not needs_entry.empty:
-            print(f"   🎲 Tracker: Resolving {len(needs_entry)} option entries...")
+            print(f"   🎲 Resolving {len(needs_entry)} recent option entries...")
             async with httpx.AsyncClient() as client:
                 for _, row in needs_entry.iterrows():
                     ref_date = row["buy_date"] if pd.notnull(row["buy_date"]) else row["trade_id"].split('_')[1]
@@ -226,9 +251,8 @@ class TradeTracker:
                         df_opt.loc[mask, "entry_date"] = ref_date
                         df_opt.loc[mask, "entry_price"] = price
 
-        needs_exit = merged[merged["exit_price"].isna() & merged["sell_date"].notna()]
         if not needs_exit.empty:
-            print(f"   🎲 Tracker: Resolving {len(needs_exit)} option exits...")
+            print(f"   🎲 Resolving {len(needs_exit)} recent option exits...")
             async with httpx.AsyncClient() as client:
                 for _, row in needs_exit.iterrows():
                     price = await self._fetch_option_price(client, row["option_symbol"], row["sell_date"])
@@ -244,7 +268,7 @@ class TradeTracker:
         
         for i in range(1, 6):
             t = base + timedelta(days=i)
-            if t.weekday() >= 5: continue # Skip weekends
+            if t.weekday() >= 5: continue 
             if t > date.today(): break
                 
             t_str = t.isoformat()
@@ -253,17 +277,14 @@ class TradeTracker:
             print(f"      zzz Waiting {API_WAIT_SECONDS}s for Polygon API...")
             await asyncio.sleep(API_WAIT_SECONDS)
             
-            # USE THE DAILY OPEN/CLOSE ENDPOINT (More reliable for low volume)
             url = f"https://api.polygon.io/v1/open-close/option/{symbol}/{t_str}?adjusted=true&apiKey={POLYGON_KEY}"
             
             try:
                 resp = await client.get(url, timeout=5)
                 if resp.status_code == 200:
                     data = resp.json()
-                    # Use 'close' price if available, otherwise 'open'
                     price = data.get("close") or data.get("open")
-                    if price:
-                        return price
+                    if price: return price
                 elif resp.status_code == 404:
                     print(f"      ℹ️ No quote data for {t_str}, trying next day...")
             except Exception as e:
@@ -272,6 +293,9 @@ class TradeTracker:
         return None
         
     def render_html_report(self) -> str:
+        # (Keep existing render_html_report logic exactly as is - no changes needed there)
+        # I am omitting it here for brevity, but include the full method from previous turn in your file.
+        # ... [Paste render_html_report code here] ...
         df_stock, df_opt = self.load_logs()
         
         completed = df_stock.dropna(subset=["buy_price", "sell_price", "buy_date", "sell_date"]).copy()
