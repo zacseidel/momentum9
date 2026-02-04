@@ -15,21 +15,21 @@ from universe import UniverseService
 from prices import PriceService
 from ranking import RankingService
 from report import ReportService
-from tracker import TradeTracker   # Updated Tracker
-from build_site import build_website # Static Site Generator
+from tracker import TradeTracker
+from build_site import build_website
 
 # Config
 REPORT_DIR = Path("reports")
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
-COHORTS = ["megacap", "sp500", "sp400"]
+MOMENTUM_COHORTS = ["megacap", "sp500", "sp400"]
 
 async def build_report(run_date: date):
     print(f"🚀 Starting Momentum Report for {run_date}")
     
-    # 0. Initialize Tracker (Now includes Options Engine)
+    # 0. Initialize Tracker
     tracker = TradeTracker()
 
-    # 1. Tracker Maintenance (Auto-Fill missing prices for Stocks AND Options)
+    # 1. Tracker Maintenance (Auto-Fill missing prices)
     print("📋 Checking for missing trade prices...")
     await tracker.resolve_prices()
 
@@ -44,8 +44,10 @@ async def build_report(run_date: date):
     # 4. Ranking & Signal Generation
     r_service = RankingService()
     top_picks = {} 
+    all_winners = [] # We collect all tickers that need charts/metadata
 
-    for cohort in COHORTS:
+    # --- A. Standard Momentum Strategy ---
+    for cohort in MOMENTUM_COHORTS:
         print(f"📊 Processing {cohort.upper()}...")
         
         # Get Tickers & Prices
@@ -58,21 +60,39 @@ async def build_report(run_date: date):
         top_10 = r_service.extract_top_picks(ranked_df, cohort, run_date)
         top_picks[cohort] = top_10
         
-        # --- TRACKER: Process New Signals (Stocks + Options) ---
-        # This will now trigger the OptionPicker to find contracts
+        # Collect winners for later processing
+        if not top_10.empty:
+            all_winners.extend(top_10['ticker'].tolist())
+
+        # Tracker: Process Signals
         tracker.process_signals(top_10, prices_df, cohort, run_date)
-        # -------------------------------------------------------
+
+    # --- B. Munger Strategy (Top 50 Market Cap Reversion) ---
+    print(f"📊 Processing MUNGER STRATEGY...")
+    munger_candidates = u_service.get_cohort("munger")
+    munger_tickers = munger_candidates['symbol'].tolist()
+    
+    # 1. Ensure Deep History (Needed for 200SMA)
+    await p_service.ensure_history_depth(munger_tickers, days_needed=300)
+    
+    # 2. Rank & Process
+    munger_ranks = r_service.rank_munger_cohort(munger_candidates)
+    munger_picks = r_service.process_munger_picks(munger_ranks, run_date)
+    
+    top_picks["munger"] = munger_picks
+    if not munger_picks.empty:
+        all_winners.extend(munger_picks['ticker'].tolist())
+
+    # --- C. Chart Data Preparation ---
+    # Crucial: Ensure we have full history for ALL winners so charts render
+    print(f"📉 Pre-heating chart data for {len(all_winners)} winners...")
+    await p_service.ensure_history_depth(list(set(all_winners)), days_needed=365)
 
     # 5. Momentum Report (Main HTML)
     print("📝 Generating Momentum HTML...")
     rep_service = ReportService()
     
-    all_winners = []
-    for df in top_picks.values():
-        if not df.empty:
-            all_winners.extend(df['ticker'].tolist())
-    
-    # Prefetch news/metadata with progress bars
+    # Prefetch news/metadata
     await rep_service.cache_metadata(list(set(all_winners)))
     
     # Generate Main Report
@@ -104,9 +124,9 @@ def main():
         print(f"   1. Momentum Report:  {mom_file.absolute()}")
         print(f"   2. Perf Dashboard:   {perf_file.absolute()}")
 
-        # --- NEW: Build the Website ---
+        # --- Build the Website ---
         build_website()
-        # ------------------------------
+        # -------------------------
         
     except Exception as e:
         import traceback
