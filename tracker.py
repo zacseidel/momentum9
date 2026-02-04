@@ -57,11 +57,23 @@ class TradeTracker:
 
     def process_signals(self, current_top10: pd.DataFrame, prices_df: pd.DataFrame, cohort: str, run_date: date):
         df_stock, df_opt = self.load_logs()
-        top_5 = current_top10.head(5).copy()
-        current_tickers = set(top_5["ticker"])
         
+        # --- 1. Selection Logic ---
+        # Momentum: Only track Top 5 active.
+        # Munger: Track ALL valid signals (rare events).
+        if cohort == "munger":
+            current_picks = current_top10.copy()
+        else:
+            current_picks = current_top10.head(5).copy()
+            
+        current_tickers = set(current_picks["ticker"])
+        
+        # Identify Open Trades
         open_trades = df_stock[(df_stock["cohort"] == cohort) & (df_stock["status"] == "OPEN")]
         open_tickers = set(open_trades["ticker"])
+        
+        # --- 2. Buy Logic (Universal) ---
+        # If it's a signal and we don't have it open, BUY.
         new_buys = current_tickers - open_tickers
         
         new_rows = []
@@ -90,11 +102,50 @@ class TradeTracker:
         if new_opts:
             df_opt = pd.concat([df_opt, pd.DataFrame(new_opts)], ignore_index=True)
 
-        drops_mask = (df_stock["cohort"] == cohort) & (df_stock["status"] == "OPEN") & (~df_stock["ticker"].isin(current_tickers))
-        if drops_mask.any():
-            dropping_ids = df_stock.loc[drops_mask, "trade_id"].tolist()
-            df_stock.loc[drops_mask, "drop_date"] = run_date
-            df_stock.loc[drops_mask, "status"] = "CLOSED"
+        # --- 3. Exit Logic (Divergent) ---
+        dropping_ids = []
+
+        if cohort == "munger":
+            # === STRATEGY: Time-Based Exit (1 Year Hold) ===
+            # We ignore whether it is in 'current_tickers' or not.
+            # We only close if Entry Date was >= 365 days ago.
+            
+            for idx, row in open_trades.iterrows():
+                # Determine Entry Date (Fallback to signal_date if buy_date missing)
+                entry_val = row.get("buy_date")
+                if pd.isna(entry_val):
+                    entry_val = row["signal_date"]
+                
+                try:
+                    entry_dt = pd.to_datetime(entry_val).date()
+                    days_held = (run_date - entry_dt).days
+                    
+                    if days_held >= 365:
+                        print(f"   ⏳ Munger Exit ({row['ticker']}): Held for {days_held} days.")
+                        dropping_ids.append(row["trade_id"])
+                        
+                except Exception as e:
+                    print(f"   ⚠️ Date parse error for {row['ticker']}: {e}")
+                    continue
+
+        else:
+            # === STRATEGY: Rank-Based Exit (Momentum) ===
+            # Close if it dropped out of the Top list
+            drops_mask = (df_stock["cohort"] == cohort) & \
+                         (df_stock["status"] == "OPEN") & \
+                         (~df_stock["ticker"].isin(current_tickers))
+            
+            if drops_mask.any():
+                dropping_ids = df_stock.loc[drops_mask, "trade_id"].tolist()
+
+        # --- 4. Apply Closures ---
+        if dropping_ids:
+            # Close Stocks
+            stk_mask = df_stock["trade_id"].isin(dropping_ids)
+            df_stock.loc[stk_mask, "drop_date"] = run_date
+            df_stock.loc[stk_mask, "status"] = "CLOSED"
+            
+            # Close Options
             opt_mask = (df_opt["trade_id"].isin(dropping_ids)) & (df_opt["status"] == "OPEN")
             df_opt.loc[opt_mask, "status"] = "CLOSED"
 
