@@ -46,7 +46,14 @@ class PriceService:
         try:
             sp500 = u.get_cohort("sp500")
             sp400 = u.get_cohort("sp400")
-            return set(sp500.symbol) | set(sp400.symbol) | {"VOO"}
+            # Munger is a subset of SP500, but we load it to be safe if logic changes
+            try:
+                munger = u.get_cohort("munger")
+                munger_set = set(munger.symbol)
+            except:
+                munger_set = set()
+            
+            return set(sp500.symbol) | set(sp400.symbol) | munger_set | {"VOO"}
         except Exception:
             return {"VOO"}
 
@@ -76,6 +83,49 @@ class PriceService:
 
         return resolved_map
 
+    async def ensure_history_depth(self, tickers: List[str], days_needed: int = 300):
+        """
+        Ensure specific tickers (e.g. Munger cohort) have continuous daily history 
+        in the DB to support SMA calculation.
+        """
+        print(f"🕵️ Checking history depth for {len(tickers)} tickers...")
+        
+        # We check back 'days_needed' + buffer
+        start_check = date.today() - timedelta(days=days_needed)
+        start_iso = start_check.isoformat()
+        
+        # Track how many we actually fetch to manage rate limits
+        fetches_made = 0
+
+        for ticker in tickers:
+            # 1. Check count of rows in DB since start date
+            with sqlite3.connect(self.db_path) as conn:
+                count = conn.execute(
+                    "SELECT count(*) FROM daily_prices WHERE ticker=? AND date >= ?", 
+                    (ticker, start_iso)
+                ).fetchone()[0]
+            
+            # Approx trading days is ~65% of calendar days (252/365). 
+            # If we have less than 200 rows for 300 days, we likely have gaps.
+            threshold = int(days_needed * 0.6) 
+
+            if count < threshold:
+                print(f"   📉 {ticker}: Found {count} rows (need >{threshold}). Backfilling...")
+                await self._backfill_ticker(ticker, start_check, date.today())
+                fetches_made += 1
+                
+                # POLYGON FREE TIER LIMIT: 5 calls / minute.
+                # We sleep 15s after every call to be safe (4 calls/min).
+                print("      ⏳ Sleeping 15s for rate limit...")
+                await asyncio.sleep(15)
+            else:
+                # Optional: Verbose logging
+                # print(f"   ✅ {ticker}: History ok ({count} rows).")
+                pass
+        
+        if fetches_made > 0:
+            print(f"   ✅ Backfill complete. Fetched {fetches_made} tickers.")
+
     async def get_snapshots(self, tickers: List[str], date_map: Dict[str, str]) -> pd.DataFrame:
         needed_dates = list(set(date_map.values()))
         if not needed_dates:
@@ -91,9 +141,22 @@ class PriceService:
         with sqlite3.connect(self.db_path) as conn:
             df = pd.read_sql_query(query, conn, params=needed_dates)
         
-        # Ensure VOO is included if requested, plus the main tickers
         target_set = set(tickers) | {"VOO"}
         return df[df['ticker'].isin(target_set)].copy()
+    
+    # New method to retrieve full history for calculation
+    def get_ticker_history(self, ticker: str, lookback_days: int = 365) -> pd.DataFrame:
+        """Synchronous fetch from SQLite for a single ticker's time series."""
+        start_iso = (date.today() - timedelta(days=lookback_days)).isoformat()
+        query = """
+            SELECT date, close, high, low, open 
+            FROM daily_prices 
+            WHERE ticker = ? AND date >= ? 
+            ORDER BY date ASC
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            df = pd.read_sql_query(query, conn, params=(ticker, start_iso))
+        return df
 
     # --- Internal Helpers ---
 
@@ -106,31 +169,25 @@ class PriceService:
 
             curr_iso = curr_date.isoformat()
 
-            # 1. Check if Market Data Exists in DB
             if self._is_date_in_db(curr_iso):
-                # Even if bulk data exists, ensure VOO exists too
                 await self._fetch_and_save_benchmark("VOO", curr_date)
                 return curr_date
 
-            # 2. If not, Fetch Bulk Data
             async with self._semaphore:
                 data = await self._fetch_polygon_grouped(curr_date)
             
             if data:
                 self._save_to_db(data, curr_iso)
-                # 3. Explicitly Fetch VOO to be 100% sure
                 await self._fetch_and_save_benchmark("VOO", curr_date)
                 return curr_date
             
-            # If empty, backtrack
             curr_date -= timedelta(days=1)
             await asyncio.sleep(0.5)
 
         raise RuntimeError(f"No market data found near {target}")
 
     async def _fetch_and_save_benchmark(self, ticker: str, d: date):
-        """Separate fetch for VOO to guarantee it exists."""
-        # Check if already in DB
+        """Single day fetch for VOO to guarantee it exists."""
         with sqlite3.connect(self.db_path) as conn:
             exists = conn.execute("SELECT 1 FROM daily_prices WHERE ticker=? AND date=?", 
                                 (ticker, d.isoformat())).fetchone()
@@ -144,18 +201,34 @@ class PriceService:
                 res = resp.json().get("results", [])
                 if res:
                     r = res[0]
-                    # Save single row
-                    with sqlite3.connect(self.db_path) as conn:
-                        conn.execute("""
-                            INSERT OR REPLACE INTO daily_prices (ticker, date, open, high, low, close, volume)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (ticker, d.isoformat(), r.get("o"), r.get("h"), r.get("l"), r.get("c"), r.get("v")))
+                    self._save_single_row(ticker, d.isoformat(), r)
                     print(f"      Use separate fetch for {ticker} on {d}")
 
-    def _is_date_in_db(self, date_str: str) -> bool:
-        with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute("SELECT count(*) FROM daily_prices WHERE date=?", (date_str,)).fetchone()
-        return row[0] > 800
+    async def _backfill_ticker(self, ticker: str, start_date: date, end_date: date):
+        """Fetch continuous range of data for a single ticker."""
+        # API: /v2/aggs/ticker/{stocksTicker}/range/{multiplier}/{timespan}/{from}/{to}
+        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_date}/{end_date}?adjusted=true&apiKey={API_KEY}"
+        
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                results = resp.json().get("results", [])
+                if results:
+                    rows = []
+                    for r in results:
+                        # Polygon returns timestamps in millis for Aggs
+                        ts_date = pd.to_datetime(r.get("t"), unit="ms").date().isoformat()
+                        rows.append((
+                            ticker, ts_date, 
+                            r.get("o"), r.get("h"), r.get("l"), r.get("c"), r.get("v")
+                        ))
+                    
+                    with sqlite3.connect(self.db_path) as conn:
+                        conn.executemany("""
+                            INSERT OR REPLACE INTO daily_prices (ticker, date, open, high, low, close, volume)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, rows)
+                    print(f"      💾 Backfilled {len(rows)} rows for {ticker}")
 
     async def _fetch_polygon_grouped(self, d: date) -> List[dict]:
         url = f"https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/{d}?adjusted=true&apiKey={API_KEY}"
@@ -190,3 +263,15 @@ class PriceService:
             """, filtered_rows)
         
         print(f"   💾 Saved {len(filtered_rows)} rows for {date_str}")
+        
+    def _save_single_row(self, ticker, date_str, r):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO daily_prices (ticker, date, open, high, low, close, volume)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (ticker, date_str, r.get("o"), r.get("h"), r.get("l"), r.get("c"), r.get("v")))
+
+    def _is_date_in_db(self, date_str: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("SELECT count(*) FROM daily_prices WHERE date=?", (date_str,)).fetchone()
+        return row[0] > 800
