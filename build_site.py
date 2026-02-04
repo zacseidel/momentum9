@@ -63,16 +63,28 @@ def build_website():
     (SITE_DIR / "index.html").write_text(
         render_index(report_links, trend_links, has_perf), encoding="utf-8"
     )
-    # About
+    
+    # About (UPDATED FOR MUNGER STRATEGY)
     about_content = """
     <h2>The Philosophy</h2>
-    <p>This project applies a quantitative momentum strategy to the US Stock Market. It focuses on three cohorts: MegaCap, S&P 500, and MidCap 400.</p>
-    <h3>The Strategy</h3>
+    <p>This project applies quantitative strategies to the US Stock Market to remove emotion from investing. It currently runs two distinct strategy engines:</p>
+    
+    <h3>1. Momentum Engine</h3>
+    <p>Focuses on <strong>MegaCap</strong>, <strong>S&P 500</strong>, and <strong>MidCap 400</strong> cohorts.</p>
     <ul>
         <li><strong>Ranking:</strong> Stocks are ranked by 12-month volatility-adjusted returns.</li>
-        <li><strong>Selection:</strong> We focus on the Top 5 tickers in each cohort.</li>
-        <li><strong>Execution:</strong> Trades are entered on the next trading day after a signal is generated.</li>
+        <li><strong>Selection:</strong> Top 5 tickers in each cohort.</li>
+        <li><strong>Exit:</strong> Rank-based. Assets are sold immediately when they drop out of the Top 5.</li>
     </ul>
+
+    <h3>2. Munger Engine (Mean Reversion)</h3>
+    <p>Focuses on high-quality <strong>Top 50 Market Cap</strong> stocks trading at a discount.</p>
+    <ul>
+        <li><strong>Signal:</strong> Price dips below the 200-day Moving Average (last 10 days) but recovers above the 10-day MA.</li>
+        <li><strong>Selection:</strong> Opportunistic (all valid signals).</li>
+        <li><strong>Exit:</strong> Time-based. Assets are held for a minimum of 1 year to allow for mean reversion.</li>
+    </ul>
+
     <h3>The Technology</h3>
     <p>Built with Python, using Polygon.io for data, SQLite for caching, and GitHub Actions for automation.</p>
     """
@@ -134,8 +146,8 @@ def render_index(reports, trends, has_perf):
     <body>
         <div class="hero">
             <div>
-                <h1>Momentum Strategy</h1>
-                <p style="margin:5px 0 0 0; opacity:0.8;">Weekly quantitative analysis & performance tracking.</p>
+                <h1>Quantitative Engines</h1>
+                <p style="margin:5px 0 0 0; opacity:0.8;">Weekly Momentum & Mean Reversion Analysis.</p>
             </div>
             {% if has_perf %}
             <a href="performance.html" class="btn">View Performance 📈</a>
