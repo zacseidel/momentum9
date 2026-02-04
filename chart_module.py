@@ -1,154 +1,138 @@
-import os
-import time
 import pandas as pd
 import mplfinance as mpf
-import requests
-from datetime import datetime, timedelta, timezone
-from typing import Tuple
-from dotenv import load_dotenv
-import matplotlib.pyplot as plt
+import sqlite3
+from pathlib import Path
+from typing import Tuple, Optional
 
 # --- Config ---
-load_dotenv()
-API_KEY = (os.getenv("POLYGON_API_KEY") or os.getenv("POLYGON_KEY") or "").strip()
-BASE_URL = "https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}"
+DB_PATH = Path("data/market_data.sqlite")
 
-if not API_KEY:
-    raise RuntimeError("Missing Polygon key. Set POLYGON_API_KEY in .env")
+def _fetch_history_from_db(ticker: str, days_back=365) -> pd.DataFrame:
+    """
+    Fetches daily OHLCV from the local SQLite DB.
+    Assumes data has already been synced/backfilled by the PriceService.
+    """
+    # Calculate cutoff date
+    cutoff_date = (pd.Timestamp.now() - pd.Timedelta(days=days_back)).strftime("%Y-%m-%d")
 
-# Simple in-memory cache
-_CACHE = {}
-
-def _fetch_history(ticker: str, days_back=365) -> pd.DataFrame:
-    """Fetches daily OHLCV from Polygon (Blocking/Sync)."""
-    
-    # 1. Check Cache
-    utc_now = datetime.now(timezone.utc)
-    today_str = utc_now.strftime("%Y-%m-%d")
-    cache_key = (ticker, today_str)
-    
-    if cache_key in _CACHE:
-        return _CACHE[cache_key]
-
-    # 2. Setup Dates
-    start_dt = utc_now - timedelta(days=days_back)
-    start_fmt = start_dt.strftime("%Y-%m-%d")
-    end_fmt = today_str
-
-    # 3. Request
-    url = BASE_URL.format(ticker=ticker, start=start_fmt, end=end_fmt)
-    params = {"adjusted": "true", "sort": "asc", "apiKey": API_KEY}
-    
-    try:
-        resp = requests.get(url, params=params, timeout=10)
-        
-        if resp.status_code == 429:
-            print(f"   ⚠️ Chart rate limit ({ticker}). Sleeping 15s...")
-            time.sleep(15)
-            return _fetch_history(ticker, days_back) # Retry once
-            
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        print(f"   ⚠️ Chart fetch failed for {ticker}: {e}")
-        return pd.DataFrame()
-    finally:
-        # PROACTIVE safety net: Always sleep 13s after a request
-        time.sleep(13) 
-
-    results = data.get("results", [])
-    if not results:
+    # Connect and Query
+    # Note: We assume the DB exists because run_report.py creates it
+    if not DB_PATH.exists():
         return pd.DataFrame()
 
-    # 4. Parse
-    df = pd.DataFrame(results)
-    df["Date"] = pd.to_datetime(df["t"], unit="ms").dt.tz_localize(None) # UTC -> Naive
+    with sqlite3.connect(DB_PATH) as conn:
+        query = """
+            SELECT date, open, high, low, close, volume 
+            FROM daily_prices 
+            WHERE ticker = ? AND date >= ? 
+            ORDER BY date ASC
+        """
+        df = pd.read_sql_query(query, conn, params=(ticker, cutoff_date))
+
+    if df.empty:
+        return pd.DataFrame()
+
+    # Format for mplfinance
+    # 1. Set Index to Datetime
+    df["Date"] = pd.to_datetime(df["date"])
     df = df.set_index("Date").sort_index()
     
-    # Rename for mplfinance
-    df = df.rename(columns={"o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume"})
-    df = df[["Open", "High", "Low", "Close", "Volume"]]
+    # 2. Rename columns to TitleCase (Required by mplfinance)
+    df = df.rename(columns={
+        "open": "Open", 
+        "high": "High", 
+        "low": "Low", 
+        "close": "Close", 
+        "volume": "Volume"
+    })
     
-    # Cache and Return
-    _CACHE[cache_key] = df
-    return df
+    return df[["Open", "High", "Low", "Close", "Volume"]]
 
-def plot_stock_chart(ticker: str, save_path: str = None, benchmark_ticker="VOO"):
+def plot_stock_chart(ticker: str, save_path: str = None, benchmark_ticker="VOO") -> Tuple:
     """
-    Generates a candle chart with VOO overlay.
+    Generates a candle chart with VOO overlay using LOCAL DATA.
     Returns: (fig, axes) tuple.
     """
-    # 1. Get Data
-    df = _fetch_history(ticker)
-    if df.empty or len(df) < 20:
-        raise ValueError(f"Not enough data for {ticker}")
+    # 1. Get Data from DB
+    df = _fetch_history_from_db(ticker)
     
-    bench = _fetch_history(benchmark_ticker)
+    # Safety: If data is sparse (e.g. only 2 momentum snapshots), we can't chart it.
+    # The orchestrator (run_report.py) must ensure 'ensure_history_depth' was called first.
+    if df.empty or len(df) < 20:
+        print(f"⚠️ Skipping chart for {ticker}: Not enough history in DB ({len(df)} rows).")
+        return None, None
+    
+    bench = _fetch_history_from_db(benchmark_ticker)
     
     # 2. Align Benchmark (Normalize VOO to start at Ticker's price)
-    common_idx = df.index.intersection(bench.index)
-    
     addplots = []
     
-    if not common_idx.empty:
-        # Start comparison from the 10th common point (to avoid noise at very start)
-        anchor_pos = min(10, len(common_idx) - 1) 
-        anchor_date = common_idx[anchor_pos]
+    if not bench.empty:
+        common_idx = df.index.intersection(bench.index)
         
-        # Calculate scaling factor
-        t_price = df.loc[anchor_date, "Close"]
-        b_price = bench.loc[anchor_date, "Close"]
-        scale = t_price / b_price
-        
-        # Create normalized series
-        bench_norm = bench.loc[common_idx, "Close"] * scale
-        
-        # Reindex to match the main dataframe exactly
-        bench_aligned = bench_norm.reindex(df.index) 
-        
-        addplots.append(
-            mpf.make_addplot(
-                bench_aligned.values,   # <--- FIX: Pass .values (Numpy Array) instead of Series
-                color="orange", 
-                linestyle="dashed", 
-                width=1.5,
-                label=f"{benchmark_ticker} (Comp)"
-            )
-        )
+        if not common_idx.empty:
+            # Start comparison from the 10th common point to stabilize
+            anchor_pos = min(10, len(common_idx) - 1) 
+            anchor_date = common_idx[anchor_pos]
+            
+            # Calculate scaling factor
+            t_price = df.loc[anchor_date, "Close"]
+            b_price = bench.loc[anchor_date, "Close"]
+            
+            if b_price > 0:
+                scale = t_price / b_price
+                
+                # Create normalized series
+                bench_norm = bench.loc[common_idx, "Close"] * scale
+                
+                # Reindex to match the main dataframe exactly (handle gaps)
+                bench_aligned = bench_norm.reindex(df.index) 
+                
+                addplots.append(
+                    mpf.make_addplot(
+                        bench_aligned.values, 
+                        color="orange", 
+                        linestyle="dashed", 
+                        width=1.5,
+                        label=f"{benchmark_ticker} (Comp)"
+                    )
+                )
 
     # 3. Plot Style
     mc = mpf.make_marketcolors(up="#00b300", down="#ff3333", edge="inherit", wick="inherit", volume="in")
     s = mpf.make_mpf_style(base_mpf_style="yahoo", marketcolors=mc, gridstyle=":", rc={"font.size": 10})
 
     # 4. Generate Plot
-    fig, axes = mpf.plot(
-        df,
-        type="candle",
-        volume=True,
-        mav=(20, 50),
-        addplot=addplots,
-        style=s,
-        title=f"\n{ticker} vs {benchmark_ticker} (1Y)",
-        returnfig=True,
-        figsize=(10, 5),
-        tight_layout=True,
-        datetime_format="%b %Y"
-    )
-    
-    # Legend
-    axes[0].legend(loc="upper left")
-    
-    if save_path:
-        fig.savefig(save_path, bbox_inches="tight")
+    try:
+        fig, axes = mpf.plot(
+            df,
+            type="candle",
+            volume=True,
+            mav=(20, 50),
+            addplot=addplots,
+            style=s,
+            title=f"\n{ticker} vs {benchmark_ticker} (1Y)",
+            returnfig=True,
+            figsize=(10, 5),
+            tight_layout=True,
+            datetime_format="%b %Y"
+        )
         
-    return fig, axes
+        # Legend
+        if axes and len(axes) > 0:
+            axes[0].legend(loc="upper left")
+        
+        if save_path:
+            fig.savefig(save_path, bbox_inches="tight")
+            # Close memory to prevent leaks in loops
+            plt.close(fig)
+            
+        return fig, axes
+    except Exception as e:
+        print(f"❌ Error plotting {ticker}: {e}")
+        return None, None
 
 if __name__ == "__main__":
-    print("Testing Chart Module...")
-    try:
-        plot_stock_chart("NVDA", "test_chart.png")
-        print("✅ Chart saved to test_chart.png")
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+    # Test assumes you have data in the sqlite DB
+    print("Testing Chart Module (Offline Mode)...")
+    plot_stock_chart("NVDA", "test_chart.png")
