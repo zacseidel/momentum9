@@ -1015,3 +1015,7 @@ date,cohort,action,symbol
 2026-02-13,munger,add,VZ
 2026-02-13,munger,drop,AMGN
 2026-02-13,munger,drop,TMO
+2026-02-20,megacap,add,GE
+2026-02-20,megacap,drop,AMD
+2026-02-20,munger,add,AMGN
+2026-02-20,munger,drop,T
