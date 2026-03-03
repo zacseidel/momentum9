@@ -1027,3 +1027,5 @@ date,cohort,action,symbol
 2026-02-27,munger,add,KLAC
 2026-02-27,munger,drop,T
 2026-02-27,munger,drop,TXN
+2026-03-03,munger,add,ABT
+2026-03-03,munger,drop,C
