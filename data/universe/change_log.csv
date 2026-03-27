@@ -1057,3 +1057,17 @@ date,cohort,action,symbol
 2026-03-24,sp500,drop,MOH
 2026-03-24,sp500,drop,PAYC
 2026-03-24,sp500,drop,LW
+2026-03-27,sp400,add,MOG.A
+2026-03-27,sp400,add,IDCC
+2026-03-27,sp400,add,CTRE
+2026-03-27,sp400,add,SOLS
+2026-03-27,sp400,add,VICR
+2026-03-27,sp400,add,SITM
+2026-03-27,sp400,drop,GTM
+2026-03-27,sp400,drop,ASGN
+2026-03-27,sp400,drop,SATS
+2026-03-27,sp400,drop,KMPR
+2026-03-27,sp400,drop,LITE
+2026-03-27,sp400,drop,COHR
+2026-03-27,megacap,add,CAT
+2026-03-27,megacap,drop,HD
