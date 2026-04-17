@@ -1086,3 +1086,7 @@ date,cohort,action,symbol
 2026-04-14,sp500,add,2602335D
 2026-04-14,munger,add,TXN
 2026-04-14,munger,drop,VZ
+2026-04-17,megacap,add,HD
+2026-04-17,megacap,drop,PG
+2026-04-17,munger,add,TMO
+2026-04-17,munger,drop,NEE
