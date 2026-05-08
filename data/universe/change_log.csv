@@ -1104,3 +1104,10 @@ date,cohort,action,symbol
 2026-04-28,munger,drop,NEE
 2026-05-01,megacap,add,CVX
 2026-05-01,megacap,drop,BAC
+2026-05-08,sp500,add,VEEV
+2026-05-08,sp500,drop,CCL
+2026-05-08,sp500,drop,CTRA
+2026-05-08,megacap,add,LRCX
+2026-05-08,megacap,drop,CVX
+2026-05-08,munger,add,QCOM
+2026-05-08,munger,drop,VZ
