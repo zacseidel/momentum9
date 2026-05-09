@@ -150,7 +150,7 @@ def render_index(reports, trends, has_perf):
                 <p style="margin:5px 0 0 0; opacity:0.8;">Weekly Momentum & Mean Reversion Analysis.</p>
             </div>
             {% if has_perf %}
-            <a href="performance.html" class="btn">View Performance 📈</a>
+            <a href="zacseidel.github.io/eval" class="btn">View Performance 📈</a>
             {% endif %}
         </div>
 
