@@ -1111,3 +1111,8 @@ date,cohort,action,symbol
 2026-05-08,megacap,drop,CVX
 2026-05-08,munger,add,QCOM
 2026-05-08,munger,drop,VZ
+2026-05-12,sp500,add,CCL
+2026-05-12,munger,add,SNDK
+2026-05-12,munger,add,ADI
+2026-05-12,munger,drop,PEP
+2026-05-12,munger,drop,MCD
