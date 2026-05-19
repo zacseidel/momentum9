@@ -1116,3 +1116,9 @@ date,cohort,action,symbol
 2026-05-12,munger,add,ADI
 2026-05-12,munger,drop,PEP
 2026-05-12,munger,drop,MCD
+2026-05-19,sp400,add,SN
+2026-05-19,sp400,drop,FLO
+2026-05-19,megacap,add,CVX
+2026-05-19,megacap,drop,LRCX
+2026-05-19,munger,add,PEP
+2026-05-19,munger,drop,SNDK
