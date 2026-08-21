@@ -1233,3 +1233,12 @@ date,cohort,action,symbol
 2026-08-18,munger,add,SNDK
 2026-08-18,munger,drop,TMO
 2026-08-18,munger,drop,IBM
+2026-08-21,sp500,add,RDDT
+2026-08-21,sp500,add,VMRK
+2026-08-21,sp500,drop,EQR
+2026-08-21,megacap,add,PLTR
+2026-08-21,megacap,drop,LRCX
+2026-08-21,munger,add,TMO
+2026-08-21,munger,add,IBM
+2026-08-21,munger,drop,CRWD
+2026-08-21,munger,drop,LIN
